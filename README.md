@@ -23,10 +23,46 @@ Search, build tools, generate media, run agents, and browse privately — all fr
 | Free cloud | NVIDIA NIM |
 | Paid models | Claude API (Haiku / Sonnet) |
 | Free Pro | Claude Pro OAuth via Claude Code SDK |
-| Agents | Ruflo (`npx ruflo`) |
+| Agents | Ruflo (npx ruflo) |
 | Browser | Playwright headless Chromium |
 | Search | ChromaDB + nomic-embed-text |
 | Media | FLUX · DALL-E 3 · RunwayML · ElevenLabs |
 | Privacy | Tor · playwright-extra stealth |
 
 ## Structure
+
+    atlas/
+    ├── backend/app/
+    │   ├── models/       # Phase 1 — model router
+    │   ├── browser/      # Phase 2 — Playwright engine
+    │   ├── search/       # Phase 3 — ChromaDB + memory
+    │   ├── media/        # Phase 4 — image/video/audio
+    │   ├── ide/          # Phase 5 — code sandbox
+    │   ├── privacy/      # Phase 6 — Tor + fingerprinting
+    │   ├── safety/       # Phase 7 — safe browsing
+    │   ├── toolbuilder/  # Phase 8 — auto tool gen ⭐
+    │   ├── agents/       # Phase 9 — Ruflo agents
+    │   └── api/          # FastAPI routes
+    ├── frontend/         # React + Vite
+    └── data/             # Local (gitignored)
+
+## Roadmap
+
+| Phase | Focus | Target |
+|-------|-------|--------|
+| 0 | Setup ✅ | Jun 2026 |
+| 1 | Model router | Jul 2026 |
+| 2 | Browser engine | Jul 2026 |
+| 3 | Search + memory | Aug 2026 |
+| 4 | Media generation | Sep 2026 |
+| 5 | Code IDE | Sep 2026 |
+| 6 | Privacy layer | Oct 2026 |
+| 7 | Safe browsing | Oct 2026 |
+| 8 | Tool builder ⭐ | Nov 2026 |
+| 9 | Ruflo agents | Dec 2026 |
+| 10 | UI + search | Jan 2027 |
+| 11 | Package + ship | Feb 2027 |
+
+---
+
+Phase 0 complete. Private project — solo development.
