@@ -1,0 +1,5 @@
+{
+  "prompt_node": {"id": "6", "field": "text"},
+  "seed_node":   {"id": "25", "field": "noise_seed"},
+  "size_node":   {"id": "5", "width_field": "width", "height_field": "height"}
+}

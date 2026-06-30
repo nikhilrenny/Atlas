@@ -1,0 +1,224 @@
+"""API routes exposing the model router, browser engine, and memory store to the frontend."""
+import base64
+
+from fastapi import APIRouter, HTTPException
+
+from app.models.router import router as model_router
+from app.browser.engine import engine as browser_engine
+from app.search.memory import memory as memory_store
+from app.media.router import media_router
+from app.ide import sandbox as ide_sandbox
+from app.ide import git_ops as ide_git
+from app.ide import completion as ide_completion
+from app.api.schemas import (
+    CompleteRequest,
+    CompleteResponse,
+    EmbedRequest,
+    EmbedResponse,
+    ModelsStatusResponse,
+    BrowserFetchRequest,
+    BrowserFetchResponse,
+    BrowserScreenshotRequest,
+    BrowserScreenshotResponse,
+    MemoryAddRequest,
+    MemoryAddResponse,
+    MemorySearchRequest,
+    MemorySearchResponse,
+    MemorySearchResult,
+    MediaImageRequest,
+    MediaVideoRequest,
+    MediaAudioRequest,
+    MediaResponse,
+    IDERunRequest,
+    IDERunResponse,
+    IDEGitStatusRequest,
+    IDEGitStatusResponse,
+    IDEGitDiffRequest,
+    IDEGitDiffResponse,
+    IDEGitCommitRequest,
+    IDEGitCommitResponse,
+    IDEGitLogRequest,
+    IDEGitLogResponse,
+    IDECompleteRequest,
+    IDECompleteResponse,
+)
+from app.ide.git_ops import GitError
+
+router = APIRouter()
+
+
+@router.post("/chat", response_model=CompleteResponse)
+async def chat(req: CompleteRequest):
+    try:
+        result = await model_router.complete_verbose(req.prompt, complexity=req.complexity)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return CompleteResponse(**result)
+
+
+@router.post("/embed", response_model=EmbedResponse)
+async def embed(req: EmbedRequest):
+    try:
+        vector = await model_router.embed(req.text)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return EmbedResponse(embedding=vector)
+
+
+@router.get("/models/status", response_model=ModelsStatusResponse)
+async def models_status():
+    return ModelsStatusResponse(
+        ollama=await model_router.ollama.is_available(),
+        nim=model_router.nim.is_available(),
+        claude_api=model_router.claude_api.is_available(),
+    )
+
+
+@router.post("/browser/fetch", response_model=BrowserFetchResponse)
+async def browser_fetch(req: BrowserFetchRequest):
+    try:
+        result = await browser_engine.fetch(req.url)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    memory_id = None
+    if req.store:
+        memory_id = await memory_store.add(
+            result["text"],
+            metadata={"url": result["url"], "title": result["title"]},
+            collection=req.collection,
+        )
+    return BrowserFetchResponse(**result, memory_id=memory_id)
+
+
+@router.post("/browser/screenshot", response_model=BrowserScreenshotResponse)
+async def browser_screenshot(req: BrowserScreenshotRequest):
+    try:
+        png_bytes = await browser_engine.screenshot(req.url, full_page=req.full_page)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return BrowserScreenshotResponse(url=req.url, image_base64=base64.b64encode(png_bytes).decode())
+
+
+@router.post("/memory/add", response_model=MemoryAddResponse)
+async def memory_add(req: MemoryAddRequest):
+    try:
+        doc_id = await memory_store.add(req.text, metadata=req.metadata, collection=req.collection)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return MemoryAddResponse(id=doc_id)
+
+
+@router.post("/memory/search", response_model=MemorySearchResponse)
+async def memory_search(req: MemorySearchRequest):
+    try:
+        results = await memory_store.search(
+            req.query, n_results=req.n_results, collection=req.collection, where=req.where
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return MemorySearchResponse(results=[MemorySearchResult(**r) for r in results])
+
+
+@router.post("/media/image", response_model=MediaResponse)
+async def media_image(req: MediaImageRequest):
+    try:
+        result = await media_router.image(
+            req.prompt, provider=req.provider, width=req.width, height=req.height
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return MediaResponse(
+        provider=result["provider"],
+        mime=result["mime"],
+        path=result["path"],
+        base64=base64.b64encode(result["bytes"]).decode(),
+    )
+
+
+@router.post("/media/video", response_model=MediaResponse)
+async def media_video(req: MediaVideoRequest):
+    try:
+        result = await media_router.video(
+            req.prompt, image_url=req.image_url, provider=req.provider, duration=req.duration
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return MediaResponse(
+        provider=result["provider"],
+        mime=result["mime"],
+        path=result["path"],
+        base64=base64.b64encode(result["bytes"]).decode(),
+    )
+
+
+@router.post("/media/audio", response_model=MediaResponse)
+async def media_audio(req: MediaAudioRequest):
+    try:
+        result = await media_router.audio(req.text, voice=req.voice, provider=req.provider)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return MediaResponse(
+        provider=result["provider"],
+        mime=result["mime"],
+        path=result["path"],
+        base64=base64.b64encode(result["bytes"]).decode(),
+    )
+
+
+# --- Phase 5: Code IDE ---
+
+@router.post("/ide/run", response_model=IDERunResponse)
+async def ide_run(req: IDERunRequest):
+    try:
+        result = await ide_sandbox.run(req.language, req.code, timeout_s=req.timeout_s)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return IDERunResponse(**result)
+
+
+@router.post("/ide/git/status", response_model=IDEGitStatusResponse)
+async def ide_git_status(req: IDEGitStatusRequest):
+    try:
+        result = await ide_git.status(req.repo_path)
+    except GitError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return IDEGitStatusResponse(**result)
+
+
+@router.post("/ide/git/diff", response_model=IDEGitDiffResponse)
+async def ide_git_diff(req: IDEGitDiffRequest):
+    try:
+        result = await ide_git.diff(req.repo_path, path=req.path, staged=req.staged)
+    except GitError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return IDEGitDiffResponse(diff=result)
+
+
+@router.post("/ide/git/commit", response_model=IDEGitCommitResponse)
+async def ide_git_commit(req: IDEGitCommitRequest):
+    try:
+        commit_hash = await ide_git.commit(req.repo_path, req.message, paths=req.paths)
+    except GitError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return IDEGitCommitResponse(commit_hash=commit_hash)
+
+
+@router.post("/ide/git/log", response_model=IDEGitLogResponse)
+async def ide_git_log(req: IDEGitLogRequest):
+    try:
+        entries = await ide_git.log(req.repo_path, n=req.n)
+    except GitError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return IDEGitLogResponse(entries=entries)
+
+
+@router.post("/ide/complete", response_model=IDECompleteResponse)
+async def ide_complete(req: IDECompleteRequest):
+    try:
+        code = await ide_completion.complete(req.code, req.instruction, language=req.language)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return IDECompleteResponse(code=code)

@@ -1,0 +1,169 @@
+
+<style>
+.phase{border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;cursor:pointer;transition:border-color .2s}
+.phase:hover{border-color:var(--border-strong)}
+.phase-header{display:flex;align-items:center;gap:12px;padding:14px 16px}
+.phase-num{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;flex-shrink:0}
+.phase-meta{flex:1}
+.phase-title{font-size:14px;font-weight:500;color:var(--text-primary)}
+.phase-sub{font-size:12px;color:var(--text-secondary);margin-top:2px}
+.phase-right{text-align:right;flex-shrink:0}
+.phase-weeks{font-size:12px;font-weight:500;color:var(--text-secondary)}
+.phase-date{font-size:11px;color:var(--text-muted);margin-top:2px}
+.phase-body{padding:0 16px 14px;border-top:1px solid var(--border);display:none}
+.phase.open .phase-body{display:block}
+.tasks{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.task{font-size:11px;padding:3px 8px;border-radius:20px;border:1px solid var(--border)}
+.bar-wrap{height:6px;background:var(--border);border-radius:3px;margin-top:10px;overflow:hidden}
+.bar{height:100%;border-radius:3px;transition:width .4s ease}
+.deliverable{font-size:12px;color:var(--text-secondary);margin-top:8px;padding:8px 10px;background:var(--surface-1);border-radius:8px;border-left:3px solid}
+.total-bar{display:flex;gap:4px;margin-bottom:16px;border-radius:8px;overflow:hidden;height:10px}
+.total-seg{height:100%;transition:flex .3s}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.leg{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary)}
+.leg-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+</style>
+
+<div style="padding:4px 0 0">
+<div class="legend">
+  <div class="leg"><div class="leg-dot" style="background:#534AB7"></div>Foundation</div>
+  <div class="leg"><div class="leg-dot" style="background:#1D9E75"></div>Browser core</div>
+  <div class="leg"><div class="leg-dot" style="background:#BA7517"></div>Media + IDE</div>
+  <div class="leg"><div class="leg-dot" style="background:#D85A30"></div>Privacy + Safety</div>
+  <div class="leg"><div class="leg-dot" style="background:#D4537E"></div>Intelligence</div>
+  <div class="leg"><div class="leg-dot" style="background:#888780"></div>Polish + ship</div>
+</div>
+
+<div class="total-bar">
+  <div class="total-seg" style="flex:2;background:#534AB7"></div>
+  <div class="total-seg" style="flex:3;background:#1D9E75"></div>
+  <div class="total-seg" style="flex:3;background:#BA7517"></div>
+  <div class="total-seg" style="flex:2;background:#D85A30"></div>
+  <div class="total-seg" style="flex:3;background:#D4537E"></div>
+  <div class="total-seg" style="flex:3;background:#888780"></div>
+</div>
+
+<div id="phases"></div>
+<div style="font-size:12px;color:var(--text-muted);margin-top:8px;text-align:right">Click any phase to expand · Solo developer estimate · ~9 months total</div>
+</div>
+
+<script>
+const phases = [
+  {
+    num:1, color:'#534AB7', bg:'#EEEDFE', group:'Foundation',
+    title:'Model router', sub:'Ollama · NVIDIA NIM · Claude API · Claude Pro OAuth',
+    weeks:2, start:'Jul 2026',
+    tasks:['Ollama setup + RTX 5070 config','NVIDIA NIM API key + endpoint','Claude API key routing','Claude Pro OAuth (free-claude-code pattern)','Router logic: task → model','Cost + latency logging'],
+    deliverable:'One unified model() call that routes to any provider. Swap models without changing downstream code.',
+    color2:'#534AB7'
+  },
+  {
+    num:2, color:'#1D9E75', bg:'#E1F5EE', group:'Browser core',
+    title:'Browser engine', sub:'Playwright · page reader · content extractor',
+    weeks:3, start:'Jul 2026',
+    tasks:['Playwright headless setup','Page → structured text extractor','JS-rendered site support','Screenshot + vision mode','Tab manager','Session persistence'],
+    deliverable:'Give it a URL, get back clean structured content. The engine every other layer sits on.',
+    color2:'#1D9E75'
+  },
+  {
+    num:3, color:'#1D9E75', bg:'#E1F5EE', group:'Browser core',
+    title:'Search + memory', sub:'ChromaDB · embeddings · reranking · live web',
+    weeks:3, start:'Aug 2026',
+    tasks:['ChromaDB local vector store','Ollama nomic-embed-text embeddings','BM25 keyword fallback','Web crawl → chunk → index pipeline','Top-k retrieval + reranker','Session memory (rolling context)'],
+    deliverable:'Type a query, get semantically relevant results from crawled pages + live web. Faster and more accurate than keyword search.',
+    color2:'#1D9E75'
+  },
+  {
+    num:4, color:'#BA7517', bg:'#FAEEDA', group:'Media + IDE',
+    title:'Media generation', sub:'Image · video · audio across all APIs',
+    weeks:2, start:'Sep 2026',
+    tasks:['FLUX local via ComfyUI (RTX 5070)','DALL-E 3 + Ideogram API','RunwayML Gen-3 video','Pika / Kling fallback','ElevenLabs TTS','Unified media() call with provider routing'],
+    deliverable:'One command generates image, video, or audio. Automatically routes to local GPU or cloud based on type + cost.',
+    color2:'#BA7517'
+  },
+  {
+    num:5, color:'#BA7517', bg:'#FAEEDA', group:'Media + IDE',
+    title:'Code IDE', sub:'Monaco · Claude Code · sandbox runner',
+    weeks:2, start:'Sep 2026',
+    tasks:['Monaco editor in React panel','Claude Code OAuth AI completion','Codex / Copilot fallback','Python + JS sandbox runner (subprocess)','File system access (local)','Git integration'],
+    deliverable:'Full AI code editor embedded in the browser. Write, run, and deploy code from the same interface you search from.',
+    color2:'#BA7517'
+  },
+  {
+    num:6, color:'#D85A30', bg:'#FAECE7', group:'Privacy + Safety',
+    title:'Privacy + anonymous layer', sub:'Tor · fingerprint spoofing · no-log mode',
+    weeks:2, start:'Oct 2026',
+    tasks:['Tor proxy via Playwright','playwright-extra stealth plugin','Fingerprint randomisation (UA, canvas, WebGL)','No-log mode (skip history + memory)','Local-only inference toggle','Encrypted session storage'],
+    deliverable:'Toggle anonymous mode: all traffic through Tor, no fingerprint, no logs, all AI inference stays local.',
+    color2:'#D85A30'
+  },
+  {
+    num:7, color:'#D85A30', bg:'#FAECE7', group:'Privacy + Safety',
+    title:'Safe browsing', sub:'Malware · phishing · content filtering',
+    weeks:1, start:'Oct 2026',
+    tasks:['Google Safe Browsing API','VirusTotal URL check','AI phishing detector (local model)','Content filter modes (work/kids/default)','Warning UI before unsafe pages'],
+    deliverable:'Every page checked before load. Configurable filter levels. Parents, workplaces, or just cautious users.',
+    color2:'#D85A30'
+  },
+  {
+    num:8, color:'#D4537E', bg:'#FBEAF0', group:'Intelligence',
+    title:'Tool builder', sub:'The Atlas bridge — auto-generate tools from any page',
+    weeks:4, start:'Nov 2026',
+    tasks:['Page pattern detector (LLM classifies page type)','Tool manifest generator (LLM writes JSON)','Python tool generator (LLM writes code)','Live tool registration (no restart)','Auto UI renderer from manifest','Tool library sync with Atlas'],
+    deliverable:'Land on any page. AI sees it, writes a tool for it, registers it, shows you a UI panel. Same manifest system as Atlas.',
+    color2:'#D4537E'
+  },
+  {
+    num:9, color:'#D4537E', bg:'#FBEAF0', group:'Intelligence',
+    title:'Agent layer — Ruflo', sub:'Multi-step tasks · parallel agents · memory',
+    weeks:3, start:'Dec 2026',
+    tasks:['Ruflo install + Claude Code integration','Task planner agent (breaks goal into steps)','Search agent (runs queries autonomously)','Tool-builder agent (auto-generates tools)','Parallel agent orchestration','Progress UI (step-by-step visible)'],
+    deliverable:'Type a goal. Ruflo plans it, spins up agents, uses tools, browses pages, and returns a result. Like having an intern.',
+    color2:'#D4537E'
+  },
+  {
+    num:10, color:'#888780', bg:'#F1EFE8', group:'Polish + ship',
+    title:'UI + search interface', sub:'The product people actually use',
+    weeks:3, start:'Jan 2027',
+    tasks:['Search-first homepage (glass morphism)','AI answer panel with citations','Live tool sidebar','Agent task view (steps + status)','Model switcher (cost + speed shown)','Settings: privacy · safety · models'],
+    deliverable:'The full product. Search bar in the middle. Everything else appears when needed. Steve Jobs would approve.',
+    color2:'#888780'
+  },
+  {
+    num:11, color:'#888780', bg:'#F1EFE8', group:'Polish + ship',
+    title:'Package + distribute', sub:'Installer · Docker · public release',
+    weeks:2, start:'Feb 2027',
+    tasks:['Windows installer (Electron shell or .exe)','Docker container option','Setup wizard (API keys + model download)','Docs + README','GitHub public release','Optional: web-hosted version'],
+    deliverable:'Anyone can install it in under 5 minutes. The internet as a personal tool, for everyone.',
+    color2:'#888780'
+  }
+];
+
+const container = document.getElementById('phases');
+const totalWeeks = phases.reduce((s,p)=>s+p.weeks,0);
+
+phases.forEach((p,i) => {
+  const pct = Math.round((p.weeks/totalWeeks)*100);
+  const div = document.createElement('div');
+  div.className = 'phase';
+  div.innerHTML = `
+    <div class="phase-header">
+      <div class="phase-num" style="background:${p.bg};color:${p.color}">${p.num}</div>
+      <div class="phase-meta">
+        <div class="phase-title">${p.title}</div>
+        <div class="phase-sub">${p.sub}</div>
+      </div>
+      <div class="phase-right">
+        <div class="phase-weeks">${p.weeks}w</div>
+        <div class="phase-date">${p.start}</div>
+      </div>
+    </div>
+    <div class="phase-body">
+      <div class="bar-wrap"><div class="bar" style="width:${pct}%;background:${p.color}"></div></div>
+      <div class="tasks">${p.tasks.map(t=>`<div class="task" style="border-color:${p.color}33;color:var(--text-secondary)">${t}</div>`).join('')}</div>
+      <div class="deliverable" style="border-color:${p.color}">${p.deliverable}</div>
+    </div>`;
+  div.querySelector('.phase-header').onclick = () => div.classList.toggle('open');
+  container.appendChild(div);
+});
+</script>
