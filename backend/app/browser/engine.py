@@ -12,6 +12,8 @@ from contextlib import asynccontextmanager
 
 from playwright.async_api import async_playwright, Browser, Playwright
 
+from app.privacy import fingerprint, tor_proxy
+
 
 class BrowserEngine:
     def __init__(self, headless: bool = True):
@@ -36,16 +38,30 @@ class BrowserEngine:
                 self._playwright = None
 
     @asynccontextmanager
-    async def page(self, **context_kwargs):
+    async def page(self, tor: bool = False, stealth: bool = False, **context_kwargs):
         """Yields a fresh Page in its own isolated context. The context (not just the
         page) is closed on exit so cookies/storage don't leak between fetches.
 
-        context_kwargs are passed straight to browser.new_context() — this is the hook
-        Phase 6 (privacy) will use to inject a proxy/stealth-fingerprint context."""
+        tor: route this context's traffic through the local Tor SOCKS proxy
+            (app.privacy.tor_proxy). Caller is responsible for having Tor running.
+        stealth: apply fingerprint randomization + the stealth init script
+            (app.privacy.fingerprint) so this context doesn't trip the common
+            headless-Chrome checks.
+        Remaining context_kwargs are passed straight to browser.new_context(),
+        and override any defaults stealth=True would otherwise set.
+        """
         await self.start()
+
+        if stealth:
+            context_kwargs = {**fingerprint.random_context_kwargs(), **context_kwargs}
+        if tor:
+            context_kwargs = {**context_kwargs, "proxy": tor_proxy.get_proxy_config()}
+
         context = await self._browser.new_context(**context_kwargs)
         try:
             page = await context.new_page()
+            if stealth:
+                await fingerprint.apply_stealth(page)
             try:
                 yield page
             finally:
@@ -53,9 +69,12 @@ class BrowserEngine:
         finally:
             await context.close()
 
-    async def fetch(self, url: str, wait_until: str = "networkidle", timeout_ms: int = 30000) -> dict:
+    async def fetch(
+        self, url: str, wait_until: str = "networkidle", timeout_ms: int = 30000,
+        tor: bool = False, stealth: bool = False,
+    ) -> dict:
         """Navigates to a URL and returns rendered HTML, plain text, and title."""
-        async with self.page() as page:
+        async with self.page(tor=tor, stealth=stealth) as page:
             await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
             return {
                 "url": url,
@@ -64,8 +83,11 @@ class BrowserEngine:
                 "text": await page.inner_text("body"),
             }
 
-    async def screenshot(self, url: str, full_page: bool = True, timeout_ms: int = 30000) -> bytes:
-        async with self.page() as page:
+    async def screenshot(
+        self, url: str, full_page: bool = True, timeout_ms: int = 30000,
+        tor: bool = False, stealth: bool = False,
+    ) -> bytes:
+        async with self.page(tor=tor, stealth=stealth) as page:
             await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
             return await page.screenshot(full_page=full_page)
 

@@ -10,6 +10,8 @@ from app.media.router import media_router
 from app.ide import sandbox as ide_sandbox
 from app.ide import git_ops as ide_git
 from app.ide import completion as ide_completion
+from app.privacy import tor_proxy
+from app.safety import checker as safety_checker
 from app.api.schemas import (
     CompleteRequest,
     CompleteResponse,
@@ -41,6 +43,9 @@ from app.api.schemas import (
     IDEGitLogResponse,
     IDECompleteRequest,
     IDECompleteResponse,
+    PrivacyStatusResponse,
+    SafetyCheckRequest,
+    SafetyCheckResponse,
 )
 from app.ide.git_ops import GitError
 
@@ -76,8 +81,18 @@ async def models_status():
 
 @router.post("/browser/fetch", response_model=BrowserFetchResponse)
 async def browser_fetch(req: BrowserFetchRequest):
+    safety_result = None
+    if req.block_unsafe:
+        verdict = await safety_checker.check_url(req.url)
+        safety_result = SafetyCheckResponse(**verdict)
+        if safety_result.verdict == "dangerous":
+            raise HTTPException(
+                status_code=403,
+                detail=f"Blocked unsafe URL: {req.url} (reasons: {safety_result.heuristics.reasons})",
+            )
+
     try:
-        result = await browser_engine.fetch(req.url)
+        result = await browser_engine.fetch(req.url, tor=req.tor, stealth=req.stealth)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -88,13 +103,15 @@ async def browser_fetch(req: BrowserFetchRequest):
             metadata={"url": result["url"], "title": result["title"]},
             collection=req.collection,
         )
-    return BrowserFetchResponse(**result, memory_id=memory_id)
+    return BrowserFetchResponse(**result, memory_id=memory_id, safety=safety_result)
 
 
 @router.post("/browser/screenshot", response_model=BrowserScreenshotResponse)
 async def browser_screenshot(req: BrowserScreenshotRequest):
     try:
-        png_bytes = await browser_engine.screenshot(req.url, full_page=req.full_page)
+        png_bytes = await browser_engine.screenshot(
+            req.url, full_page=req.full_page, tor=req.tor, stealth=req.stealth
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return BrowserScreenshotResponse(url=req.url, image_base64=base64.b64encode(png_bytes).decode())
@@ -222,3 +239,27 @@ async def ide_complete(req: IDECompleteRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return IDECompleteResponse(code=code)
+
+
+# --- Phase 6: Privacy ---
+
+@router.get("/privacy/status", response_model=PrivacyStatusResponse)
+async def privacy_status():
+    port_open = tor_proxy.is_port_open()
+    if not port_open:
+        return PrivacyStatusResponse(tor_port_open=False, tor_verified=False)
+    try:
+        result = await tor_proxy.check_exit_ip()
+        return PrivacyStatusResponse(
+            tor_port_open=True, tor_verified=bool(result.get("IsTor")), tor_exit_ip=result.get("IP")
+        )
+    except Exception as e:
+        return PrivacyStatusResponse(tor_port_open=True, tor_verified=False, error=str(e))
+
+
+# --- Phase 7: Safe browsing ---
+
+@router.post("/safety/check", response_model=SafetyCheckResponse)
+async def safety_check(req: SafetyCheckRequest):
+    result = await safety_checker.check_url(req.url, deep_scan=req.deep_scan)
+    return SafetyCheckResponse(**result)

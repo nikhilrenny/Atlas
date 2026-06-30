@@ -5,10 +5,13 @@ Run from the backend directory with the venv active:
     python -m tests.test_browser
 """
 import asyncio
+from pathlib import Path
 
 from app.browser.engine import engine
 from app.browser.extractor import extract_links, extract_forms
 from app.browser.automation import fill_form
+
+FORM_FIXTURE_URL = (Path(__file__).parent / "fixtures" / "test_form.html").as_uri()
 
 
 async def main():
@@ -29,10 +32,10 @@ async def main():
     except Exception as e:
         print(f"FAILED: {e}")
 
-    print("\n--- form extraction + fill (httpbin test form) ---")
+    print("\n--- form extraction + fill (local fixture, no network dependency) ---")
     try:
         async with engine.page() as page:
-            await page.goto("https://httpbin.org/forms/post", wait_until="networkidle")
+            await page.goto(FORM_FIXTURE_URL)
             forms = await extract_forms(page)
             if forms:
                 print(f"fields: {[f['name'] for f in forms[0]['fields']]}")
