@@ -49,6 +49,7 @@ export default function HomePage({ onNavigate }) {
   const [working, setWorking]   = useState(false);
   const [result, setResult]     = useState(null); // {output_type, data, error}
   const [recentMem, setRecentMem] = useState([]);
+  const [dropdownArmed, setDropdownArmed] = useState(false);
   const inputRef = useRef(null);
 
   const { prefix, body } = parseInput(raw);
@@ -61,9 +62,17 @@ export default function HomePage({ onNavigate }) {
       .catch(() => {});
   }, []);
 
+  const showDropdown = focused && !working && !result;
+
+  useEffect(() => {
+    if (!showDropdown) { setDropdownArmed(false); return; }
+    const t = setTimeout(() => setDropdownArmed(true), 300);
+    return () => clearTimeout(t);
+  }, [showDropdown]);
+
   const placeholder = command
     ? command.placeholder
-    : "Ask anything, or use ~ # * / > for commands…";
+    : "Ask anything…";
 
   const handleKey = async (e) => {
     if (e.key !== "Enter" || !raw.trim()) return;
@@ -108,8 +117,6 @@ export default function HomePage({ onNavigate }) {
     }
   };
 
-  const showDropdown = focused && !working && !result;
-
   return (
     <div className="home">
       <p className="home-wordmark">ATLAS</p>
@@ -150,7 +157,7 @@ export default function HomePage({ onNavigate }) {
         </div>
 
         {showDropdown && (
-          <div className="cmd-dropdown">
+          <div className={`cmd-dropdown ${dropdownArmed ? "" : "cmd-dropdown-arming"}`}>
             {recentMem.length > 0 && (
               <>
                 <p className="cmd-section-label">Recent</p>

@@ -71,17 +71,25 @@ class BrowserEngine:
 
     async def fetch(
         self, url: str, wait_until: str = "networkidle", timeout_ms: int = 30000,
-        tor: bool = False, stealth: bool = False,
+        tor: bool = False, stealth: bool = False, record_visit: bool = True,
     ) -> dict:
         """Navigates to a URL and returns rendered HTML, plain text, and title."""
         async with self.page(tor=tor, stealth=stealth) as page:
             await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
-            return {
+            result = {
                 "url": url,
                 "title": await page.title(),
                 "html": await page.content(),
                 "text": await page.inner_text("body"),
             }
+        if record_visit:
+            try:
+                from app import memory as mem
+                import asyncio
+                asyncio.create_task(mem.record_page_visit(url, result["title"]))
+            except Exception:
+                pass
+        return result
 
     async def screenshot(
         self, url: str, full_page: bool = True, timeout_ms: int = 30000,

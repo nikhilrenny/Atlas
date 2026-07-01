@@ -22,7 +22,7 @@ class NIMClient:
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=8) as client:
             r = await client.post(f"{NIM_BASE_URL}/chat/completions", headers=headers, json=payload)
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]

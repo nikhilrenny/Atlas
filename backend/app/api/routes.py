@@ -12,6 +12,8 @@ from app.ide import git_ops as ide_git
 from app.ide import completion as ide_completion
 from app.privacy import tor_proxy
 from app.safety import checker as safety_checker
+from app import toolbuilder
+from app.toolbuilder.registry import registry as tool_registry
 from app.api.schemas import (
     CompleteRequest,
     CompleteResponse,
@@ -48,6 +50,21 @@ from app.api.schemas import (
     SafetyCheckResponse,
 )
 from app.ide.git_ops import GitError
+from app.api.schemas import (
+    ToolBuildRequest,
+    ToolManifestResponse,
+    ToolListResponse,
+    ToolRunRequest,
+    ToolRunResponse,
+    PromptBuildRequest,
+    PromptBuildResponse,
+    ToolPinRequest,
+    MemoryRecord,
+    MemoryListResponse,
+    PreferenceEntry,
+    PreferencesResponse,
+    SetPreferenceRequest,
+)
 
 router = APIRouter()
 
@@ -263,3 +280,107 @@ async def privacy_status():
 async def safety_check(req: SafetyCheckRequest):
     result = await safety_checker.check_url(req.url, deep_scan=req.deep_scan)
     return SafetyCheckResponse(**result)
+
+
+# --- Phase 8: Tool builder ---
+
+@router.post("/toolbuilder/generate", response_model=ToolManifestResponse)
+async def toolbuilder_generate(req: ToolBuildRequest):
+    try:
+        manifest = await toolbuilder.build_from_url(req.url)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return ToolManifestResponse(**manifest.model_dump())
+
+
+@router.get("/toolbuilder/tools", response_model=ToolListResponse)
+async def toolbuilder_list():
+    return ToolListResponse(tools=[ToolManifestResponse(**m.model_dump()) for m in tool_registry.list()])
+
+
+@router.get("/toolbuilder/tools/{tool_id}", response_model=ToolManifestResponse)
+async def toolbuilder_get(tool_id: str):
+    manifest = tool_registry.get(tool_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="tool not found")
+    return ToolManifestResponse(**manifest.model_dump())
+
+
+@router.post("/toolbuilder/tools/{tool_id}/run", response_model=ToolRunResponse)
+async def toolbuilder_run(tool_id: str, req: ToolRunRequest):
+    manifest = tool_registry.get(tool_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="tool not found")
+    try:
+        result = await toolbuilder.run_tool(tool_id, req.inputs)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return ToolRunResponse(data=result.get("data"), output_type=manifest.output_type)
+
+
+@router.delete("/toolbuilder/tools/{tool_id}")
+async def toolbuilder_delete(tool_id: str):
+    if not tool_registry.delete(tool_id):
+        raise HTTPException(status_code=404, detail="tool not found")
+    return {"deleted": tool_id}
+
+
+@router.post("/toolbuilder/tools/{tool_id}/pin", response_model=ToolManifestResponse)
+async def toolbuilder_pin(tool_id: str, req: ToolPinRequest):
+    manifest = tool_registry.set_pinned(tool_id, req.pinned)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="tool not found")
+    return ToolManifestResponse(**manifest.model_dump())
+
+
+@router.post("/toolbuilder/build_from_prompt", response_model=PromptBuildResponse)
+async def toolbuilder_build_from_prompt(req: PromptBuildRequest):
+    try:
+        result = await toolbuilder.build_from_prompt(req.prompt, answers=req.answers, round=req.round)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    if result["status"] == "ready":
+        return PromptBuildResponse(status="ready", tool=ToolManifestResponse(**result["manifest"].model_dump()))
+    if result["status"] == "answered":
+        return PromptBuildResponse(status="answered", data=result["data"], output_type=result["output_type"])
+    return PromptBuildResponse(**result)
+
+
+# --- Phase 9: Memory ---
+
+from app import memory as atlas_memory
+
+
+@router.get("/memory", response_model=MemoryListResponse)
+async def memory_list(type: str | None = None, limit: int = 50, offset: int = 0):
+    records = atlas_memory.list_memories(type_=type, limit=limit, offset=offset)
+    return MemoryListResponse(memories=records, total=len(records))
+
+
+@router.get("/memory/search", response_model=MemoryListResponse)
+async def memory_search_get(q: str, limit: int = 5):
+    records = await atlas_memory.search(q, limit=limit)
+    return MemoryListResponse(memories=records, total=len(records))
+
+
+@router.delete("/memory/{memory_id}")
+async def memory_delete(memory_id: str):
+    if not atlas_memory.delete_memory(memory_id):
+        raise HTTPException(status_code=404, detail="memory not found")
+    return {"deleted": memory_id}
+
+
+@router.get("/memory/preferences", response_model=PreferencesResponse)
+async def memory_preferences():
+    prefs = atlas_memory.get_preferences()
+    return PreferencesResponse(preferences={
+        k: PreferenceEntry(**v) for k, v in prefs.items()
+    })
+
+
+@router.post("/memory/preferences")
+async def memory_set_preference(req: SetPreferenceRequest):
+    atlas_memory.set_preference(req.key, req.value, source="explicit")
+    return {"set": req.key, "value": req.value}

@@ -96,32 +96,12 @@ body {
   border-radius: var(--radius-xl);
   padding: 0;
   overflow: hidden;
-  transition: box-shadow 0.2s ease;
+  box-shadow: var(--shadow-md);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
   position: relative;
 }
 
-/* animated ring on focus */
-.cmd-card::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border-radius: calc(var(--radius-xl) + 2px);
-  background: conic-gradient(from var(--angle, 0deg), #B8863B, #D4AF6A, #C9A227, #B8863B);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  animation: spin 3s linear infinite;
-  z-index: -1;
-}
-
-.cmd-card.focused::before { opacity: 1; }
-.cmd-card.focused { box-shadow: var(--shadow-lg); }
-
-@property --angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-@keyframes spin { to { --angle: 360deg; } }
+.cmd-card.focused { box-shadow: var(--shadow-md); }
 
 .cmd-inner {
   display: flex;
@@ -131,13 +111,15 @@ body {
   background: rgba(255,255,255,0.55);
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
-  border: 1px solid var(--glass-border);
+  border: none;
   border-radius: var(--radius-xl);
   transition: background 0.2s;
 }
 
 .cmd-card.focused .cmd-inner {
-  background: rgba(248, 247, 255, 0.88);
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(36px) saturate(220%);
+  -webkit-backdrop-filter: blur(36px) saturate(220%);
 }
 
 .cmd-prefix-badge {
@@ -159,10 +141,13 @@ body {
   font-weight: 400;
   background: transparent;
   border: none;
+  border-radius: 0;
+  padding: 0.5rem 0;
   outline: none;
   color: var(--text);
   min-width: 0;
 }
+.cmd-input:focus { box-shadow: none; }
 .cmd-input::placeholder { color: var(--text-3); }
 
 .cmd-hint {
@@ -222,14 +207,22 @@ body {
 /* ─── Command suggestions / results ─────────────────────────────────────────── */
 .cmd-dropdown {
   margin-top: 0.5rem;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   overflow: hidden;
   background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(36px) saturate(220%);
   -webkit-backdrop-filter: blur(36px) saturate(220%);
   border: none;
-  box-shadow: 0 12px 48px rgba(184,134,59,0.14), 0 2px 8px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+  box-shadow: var(--shadow-md);
+  transform-origin: top center;
+  animation: cmdDropdownIn 0.25s cubic-bezier(0.34,1.56,0.64,1);
 }
+@keyframes cmdDropdownIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.cmd-dropdown-arming { pointer-events: none; }
 
 .cmd-section-label {
   font-size: 0.68rem;
@@ -332,6 +325,30 @@ body {
 @keyframes rotate { to { transform: rotate(360deg); } }
 
 /* ─── Notch ─────────────────────────────────────────────────────────────────── */
+.splash {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(180deg, rgba(238,242,255,0.20) 0%, rgba(238,242,255,0.35) 100%),
+    url('/orbis_fable.png') center center / cover no-repeat;
+  animation: splashFadeIn 0.2s ease;
+}
+.splash-icon {
+  width: 72px;
+  height: 72px;
+  filter: drop-shadow(0 8px 24px rgba(184,134,59,0.35));
+  animation: splashIconIn 0.5s cubic-bezier(0.34,1.56,0.64,1);
+}
+.splash-out { animation: splashFadeOut 0.25s ease forwards; }
+@keyframes splashFadeIn  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes splashFadeOut { to   { opacity: 0; } }
+@keyframes splashIconIn {
+  from { opacity: 0; transform: scale(0.7); }
+  to   { opacity: 1; transform: scale(1); }
+}
 .notch-anchor {
   position: fixed;
   bottom: 1.25rem;

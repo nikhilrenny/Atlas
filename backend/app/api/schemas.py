@@ -228,3 +228,100 @@ class SafetyCheckResponse(BaseModel):
 
 
 BrowserFetchResponse.model_rebuild()  # resolves the forward-ref to SafetyCheckResponse above
+
+
+# --- Phase 8: Tool builder ---
+
+class ToolBuildRequest(BaseModel):
+    url: str
+
+
+class ToolInputSchema(BaseModel):
+    name: str
+    label: str
+    type: str = "text"
+    required: bool = True
+    options: list[str] | None = None
+    default: str | None = None
+
+
+class ToolManifestResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    source_url: str
+    pattern: str
+    inputs: list[ToolInputSchema]
+    output_type: str
+    allowed_domains: list[str]
+    pinned: bool = False
+    created_at: str
+
+
+class ToolListResponse(BaseModel):
+    tools: list[ToolManifestResponse]
+
+
+class ToolRunRequest(BaseModel):
+    inputs: dict = {}
+
+
+class ToolRunResponse(BaseModel):
+    data: object = None
+    output_type: str = "text"
+
+
+class PromptBuildRequest(BaseModel):
+    prompt: str
+    answers: str | None = None
+    round: int = 0
+
+
+class PromptBuildResponse(BaseModel):
+    status: str  # "clarify" | "infeasible" | "ready" | "answered"
+    questions: list[str] = []
+    reason: str | None = None
+    tool: ToolManifestResponse | None = None
+    data: object = None
+    output_type: str = "text"
+
+
+class ToolPinRequest(BaseModel):
+    pinned: bool
+
+
+# --- Phase 9: Memory ---
+
+class MemoryRecord(BaseModel):
+    id: str
+    type: str
+    content: str
+    data: object
+    tags: list[str] = []
+    created_at: str
+    updated_at: str
+
+
+class MemoryListResponse(BaseModel):
+    memories: list[MemoryRecord]
+    total: int
+
+
+class PreferenceEntry(BaseModel):
+    value: str
+    confidence: float
+    source: str
+
+
+class PreferencesResponse(BaseModel):
+    preferences: dict[str, PreferenceEntry]
+
+
+class SetPreferenceRequest(BaseModel):
+    key: str
+    value: str
+
+
+class MemoryContextResponse(BaseModel):
+    memories: list[MemoryRecord] = []
+    preferences: dict[str, PreferenceEntry] = {}

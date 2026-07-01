@@ -1,4 +1,5 @@
 """Ollama client — local models, free, private. Used for embeddings and low-stakes local completion."""
+import re
 import httpx
 
 OLLAMA_HOST = "http://localhost:11434"
@@ -8,14 +9,17 @@ class OllamaClient:
     def __init__(self, host: str = OLLAMA_HOST):
         self.host = host
 
-    async def complete(self, prompt: str, model: str = "llama3.1:8b", **kwargs) -> str:
+    async def complete(self, prompt: str, model: str = "llama3.1:8b", max_tokens: int = 2048, **kwargs) -> str:
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(
                 f"{self.host}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False},
+                json={"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": max_tokens}},
             )
             r.raise_for_status()
-            return r.json()["response"]
+            text = r.json()["response"]
+            # Strip Qwen3 <think>...</think> reasoning blocks before returning.
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+            return text
 
     async def embed(self, text, model: str = "nomic-embed-text"):
         single = isinstance(text, str)

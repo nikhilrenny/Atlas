@@ -10,3 +10,5 @@ python-docx==1.2.0
 pymupdf==1.28.0
 pydantic==2.13.4
 socksio==1.0.0
+beautifulsoup4==4.13.4
+pillow==11.3.0

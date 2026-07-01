@@ -7,6 +7,7 @@ Routing:
   high complexity    -> Claude Pro OAuth (free), falls back to Claude API Sonnet if OAuth fails
 """
 import logging
+import os
 import time
 from enum import Enum
 
@@ -46,6 +47,33 @@ class ModelRouter:
         return await self.ollama.embed(text)
 
     async def _dispatch(self, prompt: str, level: Complexity, prefer_free: bool, **kwargs) -> tuple[str, str]:
+        # Hard override: route everything to Ollama, skip NIM/Claude entirely.
+        # Low complexity (assess/classify) -> llama3.1:8b (fast)
+        # High/mid complexity (code generation) -> qwen3.5:9b (better at Python)
+        if os.environ.get("ATLAS_FORCE_OLLAMA", "").lower() in ("1", "true", "yes"):
+            model = "llama3.1:8b" if level == Complexity.LOW else "qwen3.5:9b"
+            start = time.perf_counter()
+            try:
+                text = await self.ollama.complete(prompt, model=model, **kwargs)
+                return text, "ollama"
+            finally:
+                usage_log.record(
+                    provider="ollama", complexity=level.value,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    prompt_chars=len(prompt), response_chars=0,
+                )
+
+        if os.environ.get("ATLAS_FORCE_CLAUDE_PRO", "").lower() in ("1", "true", "yes"):
+            start = time.perf_counter()
+            try:
+                text = await self.claude_oauth.complete(prompt, **kwargs)
+                return text, "claude_oauth"
+            finally:
+                usage_log.record(
+                    provider="claude_oauth", complexity=level.value,
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    prompt_chars=len(prompt), response_chars=0,
+                )
         """Runs the routing logic for an already-classified prompt. Returns (text, provider_name).
 
         Times the whole call (including any fallback hop) and persists one record to
