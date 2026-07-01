@@ -9,12 +9,14 @@ class OllamaClient:
     def __init__(self, host: str = OLLAMA_HOST):
         self.host = host
 
-    async def complete(self, prompt: str, model: str = "llama3.1:8b", max_tokens: int = 2048, **kwargs) -> str:
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post(
-                f"{self.host}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": max_tokens}},
-            )
+    async def complete(self, prompt: str, model: str = "llama3.1:8b", max_tokens: int = 2048, think: bool = True, **kwargs) -> str:
+        payload = {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": max_tokens}}
+        if not think:
+            # Disable Qwen3-style thinking mode. Ollama ignores this for models that don't
+            # support it, so it's safe to always pass when the caller wants it off.
+            payload["think"] = False
+        async with httpx.AsyncClient(timeout=180) as client:
+            r = await client.post(f"{self.host}/api/generate", json=payload)
             r.raise_for_status()
             text = r.json()["response"]
             # Strip Qwen3 <think>...</think> reasoning blocks before returning.

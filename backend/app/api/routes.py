@@ -1,7 +1,11 @@
 """API routes exposing the model router, browser engine, and memory store to the frontend."""
 import base64
+import logging
+import traceback
 
 from fastapi import APIRouter, HTTPException
+
+log = logging.getLogger("atlas.api")
 
 from app.models.router import router as model_router
 from app.browser.engine import engine as browser_engine
@@ -340,7 +344,8 @@ async def toolbuilder_build_from_prompt(req: PromptBuildRequest):
     try:
         result = await toolbuilder.build_from_prompt(req.prompt, answers=req.answers, round=req.round)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        log.error("[toolbuilder] build_from_prompt failed: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(status_code=502, detail=str(e) or f"{type(e).__name__} (see server log)")
     if result["status"] == "ready":
         return PromptBuildResponse(status="ready", tool=ToolManifestResponse(**result["manifest"].model_dump()))
     if result["status"] == "answered":

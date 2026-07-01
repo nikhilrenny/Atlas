@@ -51,7 +51,10 @@ class ModelRouter:
         # Low complexity (assess/classify) -> llama3.1:8b (fast)
         # High/mid complexity (code generation) -> qwen3.5:9b (better at Python)
         if os.environ.get("ATLAS_FORCE_OLLAMA", "").lower() in ("1", "true", "yes"):
-            model = "llama3.1:8b" if level == Complexity.LOW else "qwen3.5:9b"
+            # Llama-only for now (qwen3.5:9b temporarily disabled — slow + unreliable JSON output).
+            model = "llama3.1:8b"
+            kwargs.setdefault("think", False)
+            kwargs.setdefault("max_tokens", 1024 if level == Complexity.LOW else 6144)
             start = time.perf_counter()
             try:
                 text = await self.ollama.complete(prompt, model=model, **kwargs)

@@ -90,7 +90,12 @@ def _extract_json(raw: str) -> dict:
     end = raw.rfind("}")
     if start == -1 or end == -1:
         raise ValueError("no JSON object found in model output")
-    return json.loads(raw[start : end + 1])
+    body = raw[start : end + 1]
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        repaired = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", body)
+        return json.loads(repaired)
 
 
 async def assess(prompt: str, force_decide: bool = False) -> dict:

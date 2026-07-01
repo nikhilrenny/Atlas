@@ -19,21 +19,27 @@ import re
 from app.models.router import router as model_router
 from .manifest import ToolManifest, INPUT_TYPES, OUTPUT_TYPES
 
-_CODE_RULES = """Output ONLY a single JSON object, no markdown fences, no commentary, with this \
-exact shape:
+_CODE_RULES = """Output EXACTLY this structure and nothing else -- no commentary before or after, \
+no markdown fences around the whole thing:
 
+===MANIFEST===
 {{
-  "manifest": {{
-    "name": "short tool name",
-    "description": "one sentence describing what it does",
-    "inputs": [{{"name": "field_name", "label": "Human label", "type": "text|number|boolean|select|file",
-                  "required": true, "options": null, "default": null}}],
-    "output_type": "text|json|table|image"
-  }},
-  "code": "async def run(inputs: dict) -> dict:\\n    ...\\n    return {{\\\"data\\\": ...}}"
+  "name": "short tool name",
+  "description": "one sentence describing what it does",
+  "inputs": [{{"name": "field_name", "label": "Human label", "type": "text|number|boolean|select|file",
+                "required": true, "options": null, "default": null}}],
+  "output_type": "text|json|table|image"
 }}
+===CODE===
+async def run(inputs: dict) -> dict:
+    ...
+    return {{"data": ...}}
 
-Rules for "code":
+The ===MANIFEST=== section must be ONLY that one JSON object -- nothing else on those lines.
+The ===CODE=== section must be ONLY raw Python source -- no markdown fences, no JSON string
+escaping, no quotes wrapping it. Write it exactly as it would appear in a .py file.
+
+Rules for the code:
 - Must define exactly one top-level function: `async def run(inputs: dict) -> dict`
 - Do NOT define any classes, do NOT wrap run() in a class. One bare function at module level only.
 - `inputs` keys match manifest.inputs[].name exactly
@@ -82,14 +88,28 @@ _PREAMBLE = "You are generating an automation tool from a web page for Atlas, a 
 _PREAMBLE_PLAN = "You are generating an automation tool for Atlas, a personal AI browser, from an already-approved plan. "
 
 
-def _extract_json(raw: str) -> dict:
+def _extract_sections(raw: str) -> tuple[dict, str]:
+    """Parses the ===MANIFEST===/===CODE=== delimited format. Code is taken as raw text --
+    no JSON string escaping involved, which was the recurring failure mode with the old
+    single-JSON-blob format on weaker local models (unescaped quotes/backslashes in code
+    breaking the surrounding JSON parse)."""
     raw = raw.strip()
-    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
-    start = raw.find("{")
-    end = raw.rfind("}")
+    if "===MANIFEST===" not in raw or "===CODE===" not in raw:
+        raise ValueError("missing ===MANIFEST=== / ===CODE=== markers in model output")
+    _, _, rest = raw.partition("===MANIFEST===")
+    manifest_part, _, code_part = rest.partition("===CODE===")
+
+    manifest_part = manifest_part.strip()
+    manifest_part = re.sub(r"^```(?:json)?\s*|\s*```$", "", manifest_part, flags=re.MULTILINE).strip()
+    start = manifest_part.find("{")
+    end = manifest_part.rfind("}")
     if start == -1 or end == -1:
-        raise ValueError("no JSON object found in model output")
-    return json.loads(raw[start : end + 1])
+        raise ValueError("no JSON object found in manifest section")
+    manifest_data = json.loads(manifest_part[start : end + 1])
+
+    code = code_part.strip()
+    code = re.sub(r"^```(?:python)?\s*|\s*```$", "", code, flags=re.MULTILINE).strip()
+    return manifest_data, code
 
 
 async def _run_generation(full_prompt: str, source_url: str, pattern: str, allowed_domains: list[str]) -> tuple[ToolManifest, str]:
@@ -97,11 +117,15 @@ async def _run_generation(full_prompt: str, source_url: str, pattern: str, allow
     for attempt in range(2):  # one retry on malformed output
         try:
             raw = await model_router.complete(full_prompt, complexity="high")
-            parsed = _extract_json(raw)
-            manifest_data = parsed["manifest"]
-            code = parsed["code"]
-            if "async def run(" not in code:
-                raise ValueError("generated code does not define async def run(inputs: dict)")
+            manifest_data, code = _extract_sections(raw)
+            if not re.search(r"\basync\s+def\s+run\s*\(", code):
+                # Weaker local models sometimes drop the `async` keyword despite the
+                # instruction. Auto-repair a plain `def run(` into `async def run(` rather
+                # than burning a retry on something trivially fixable.
+                if re.search(r"(?<!async )\bdef\s+run\s*\(", code):
+                    code = re.sub(r"\bdef\s+run\s*\(", "async def run(", code, count=1)
+                else:
+                    raise ValueError("generated code does not define a run(inputs: dict) function")
             try:
                 compile(code, "<generated>", "exec")
             except SyntaxError as e:
