@@ -4,7 +4,7 @@
 
 One search bar. Ask a question, build a tool, generate media, kick off a multi-step agent, or browse privately — all from the same input, running local-first, backed by whichever AI model actually makes sense for the job.
 
-![Home](docs/screenshots/01-home.png)
+<img src="docs/screenshots/01-home.png" alt="Home" width="720">
 
 > The Steve Jobs moment for the internet. One bar. Type what you want. Done.
 
@@ -26,22 +26,22 @@ Type a question and Atlas decides, per-request, what kind of answer it needs:
 - **A reusable tool** ("build me a JPG to PNG converter") → generates and *saves* a tool with a real input form, pinned to your homescreen for next time.
 - **A multi-step goal** ("check the weather in London and save it to memory") → detected automatically and handed to the agent planner instead of trying to force it into a single tool.
 
-![Recent searches](docs/screenshots/02-recent-searches.png)
+<img src="docs/screenshots/02-recent-searches.png" alt="Recent searches" width="720">
 
 ### 🛠️ Tool Builder — the core idea
 Paste a URL or describe what you want, and an LLM classifies the page/request, writes a manifest + Python implementation, and registers it live — no restart, no deploy step. Every generated tool runs in a sandboxed subprocess with a socket-level domain allowlist (it can only talk to the domains it declared upfront).
 
-![Tool Builder](docs/screenshots/09-tool-builder.png)
+<img src="docs/screenshots/09-tool-builder.png" alt="Tool Builder" width="720">
 
 Pinned tools live in a slide-up "Notch" at the bottom of the screen. Tapping one opens a real input form in a modal — not a blind re-run with default values.
 
-![Pinned tools in the Notch](docs/screenshots/03-notch-pinned-tools.png)
-![Running a tool](docs/screenshots/04-tool-run-modal.png)
+<img src="docs/screenshots/03-notch-pinned-tools.png" alt="Pinned tools in the Notch" width="720">
+<img src="docs/screenshots/04-tool-run-modal.png" alt="Running a tool" width="720">
 
 ### 🤖 Agents
 Give it a goal instead of a question. It decomposes the goal into ordered steps (run a saved tool / browse a URL / do a one-off lookup), executes them in sequence, and shows you exactly which step failed if something breaks. Recurring goals can be scheduled (every N minutes, or daily at a fixed time) and run unattended in the background.
 
-![Agents](docs/screenshots/08-agents.png)
+<img src="docs/screenshots/08-agents.png" alt="Agents" width="720">
 
 ### 🧠 Memory
 Every lookup, tool execution, and page visit is stored automatically in a two-tier memory system (SQLite + a ChromaDB semantic layer). Atlas periodically infers preferences from the pattern of what you search for, and injects relevant memory into tool-generation prompts silently — you never have to repeat context.
@@ -54,15 +54,15 @@ Every lookup, tool execution, and page visit is stored automatically in a two-ti
 ### ⚙️ Settings & diagnostics
 A single frosted-glass panel for the knobs that used to be env vars: prefer-free model routing, Tor/stealth/safe-browsing defaults, clearing memory, resetting the usage log, links out to every AI provider's own console, and live GPU/VRAM + provider-availability diagnostics.
 
-![Settings](docs/screenshots/11-settings.png)
+<img src="docs/screenshots/11-settings.png" alt="Settings" width="720">
 
 ### 🧪 Dev mode
 A hidden toggle unlocks a model picker (force any specific provider/model per request, for testing), a live cost/usage tracker, and a raw request log — all invisible in normal use.
 
-![Dev mode model picker](docs/screenshots/05-dev-mode-model-picker.png)
-![Model selector](docs/screenshots/07-model-selector.png)
-![Usage tracking](docs/screenshots/06-usage-widget.png)
-![Scripts / request log](docs/screenshots/10-scripts-mode.png)
+<img src="docs/screenshots/05-dev-mode-model-picker.png" alt="Dev mode model picker" width="720">
+<img src="docs/screenshots/07-model-selector.png" alt="Model selector" width="720">
+<img src="docs/screenshots/06-usage-widget.png" alt="Usage tracking" width="720">
+<img src="docs/screenshots/10-scripts-mode.png" alt="Scripts / request log" width="720">
 
 ---
 
