@@ -6,58 +6,58 @@ One search bar. Ask a question, build a tool, generate media, kick off a multi-s
 
 <img src="docs/screenshots/01-home.png" alt="Home" width="720">
 
-> The Steve Jobs moment for the internet. One bar. Type what you want. Done.
+> A single input surface for search, tool creation, agent execution, and media generation — the interface adapts to the request rather than requiring a different tool for each task.
 
 ---
 
-## Why
+## Overview
 
-Every "AI browser" so far is a chat window bolted onto a browser, or a browser with a chatbot sidebar. Atlas inverts that: the search bar *is* the interface, and everything else — tool creation, agents, memory, media — is something that bar can reach into on demand, without you ever having to know which subsystem is doing the work.
+Most "AI browser" products bolt a chat window onto an existing browser, or add a chatbot sidebar to search results. Atlas takes a different approach: the search bar is the entire interface. Tool creation, agent execution, memory, and media generation are all reachable from that single input, routed automatically to the right subsystem.
 
-It's also **local-first by default**. Cheap, low-complexity work (classification, feasibility checks, embeddings) runs on your own GPU via Ollama. Only the parts that genuinely need a frontier model escalate to the cloud, and even then it tries your free Claude Pro subscription before spending API credits.
+It is also **local-first by design**. Low-complexity work — classification, feasibility checks, embeddings — runs on-device via Ollama. Requests that genuinely require a frontier model escalate to the cloud, and even then a free Claude Pro subscription is tried before any paid API credits are spent.
 
 ---
 
-## What it can do today
+## Features
 
-### 🔍 Search that builds what it needs
-Type a question and Atlas decides, per-request, what kind of answer it needs:
-- **A direct lookup** ("who is Elon Musk") → generates a one-off Python tool on the spot, runs it, shows you a result card (with an image, key facts, related topics — Spotlight-style, not a wall of text), then throws the code away.
-- **A reusable tool** ("build me a JPG to PNG converter") → generates and *saves* a tool with a real input form, pinned to your homescreen for next time.
-- **A multi-step goal** ("check the weather in London and save it to memory") → detected automatically and handed to the agent planner instead of trying to force it into a single tool.
+### Search that builds what it needs
+Each request is classified per-call to determine the appropriate execution path:
+- **Direct lookup** ("who is Elon Musk") — generates a one-off Python tool, executes it, renders a structured result card (image, key facts, related topics), then discards the code.
+- **Reusable tool** ("build me a JPG to PNG converter") — generates and persists a tool with a real input form, available from the homescreen on subsequent use.
+- **Multi-step goal** ("check the weather in London and save it to memory") — routed to the agent planner rather than forced into a single-tool response.
 
 <img src="docs/screenshots/02-recent-searches.png" alt="Recent searches" width="720">
 
-### 🛠️ Tool Builder — the core idea
-Paste a URL or describe what you want, and an LLM classifies the page/request, writes a manifest + Python implementation, and registers it live — no restart, no deploy step. Every generated tool runs in a sandboxed subprocess with a socket-level domain allowlist (it can only talk to the domains it declared upfront).
+### Tool Builder
+A URL or a natural-language description is classified, then an LLM generates a manifest and a Python implementation, which is registered live with no restart or deploy step required. Every generated tool executes in a sandboxed subprocess constrained by a socket-level domain allowlist, restricting network access to the domains declared at generation time.
 
 <img src="docs/screenshots/09-tool-builder.png" alt="Tool Builder" width="720">
 
-Pinned tools live in a slide-up "Notch" at the bottom of the screen. Tapping one opens a real input form in a modal — not a blind re-run with default values.
+Pinned tools are accessible from a slide-up panel at the bottom of the screen. Selecting one opens its input form in a modal, rather than re-executing with default values.
 
 <img src="docs/screenshots/03-notch-pinned-tools.png" alt="Pinned tools in the Notch" width="720">
 <img src="docs/screenshots/04-tool-run-modal.png" alt="Running a tool" width="720">
 
-### 🤖 Agents
-Give it a goal instead of a question. It decomposes the goal into ordered steps (run a saved tool / browse a URL / do a one-off lookup), executes them in sequence, and shows you exactly which step failed if something breaks. Recurring goals can be scheduled (every N minutes, or daily at a fixed time) and run unattended in the background.
+### Agents
+Goals are decomposed into an ordered sequence of steps — run a saved tool, browse a URL, or perform a one-off lookup — executed sequentially with per-step status reporting on failure. Recurring goals can be scheduled at a fixed interval or daily time and run unattended.
 
 <img src="docs/screenshots/08-agents.png" alt="Agents" width="720">
 
-### 🧠 Memory
-Every lookup, tool execution, and page visit is stored automatically in a two-tier memory system (SQLite + a ChromaDB semantic layer). Atlas periodically infers preferences from the pattern of what you search for, and injects relevant memory into tool-generation prompts silently — you never have to repeat context.
+### Memory
+Lookups, tool executions, and page visits are stored automatically in a two-tier memory system (SQLite plus a ChromaDB semantic layer). User preferences are periodically inferred from usage patterns and injected into tool-generation prompts without requiring repeated context.
 
-### 🔒 Privacy & safety, opt-in
-- Tor proxy + fingerprint randomization for anonymous browsing (`tor=True`/`stealth=True` per request)
-- Safe browsing check (Google Safe Browsing + VirusTotal + local phishing heuristics) that can 403 a dangerous URL before it's ever fetched
-- Everything defaults **off** — Atlas doesn't route you through Tor or block URLs unless you've told it to, and those defaults live in one place (see Settings below)
+### Privacy & Safety
+- Tor proxy and fingerprint randomization for anonymous browsing, enabled per request (`tor=True` / `stealth=True`)
+- Safe browsing verification (Google Safe Browsing, VirusTotal, and local phishing heuristics) capable of blocking a request before a dangerous URL is fetched
+- All privacy and safety behaviors default to **off**; defaults are configured centrally in Settings
 
-### ⚙️ Settings & diagnostics
-A single frosted-glass panel for the knobs that used to be env vars: prefer-free model routing, Tor/stealth/safe-browsing defaults, clearing memory, resetting the usage log, links out to every AI provider's own console, and live GPU/VRAM + provider-availability diagnostics.
+### Settings & Diagnostics
+A single panel consolidates configuration that previously lived in environment variables: model-routing preference, Tor/stealth/safe-browsing defaults, memory and usage-log management, links to each provider's console, and live GPU/VRAM and provider-availability diagnostics.
 
 <img src="docs/screenshots/11-settings.png" alt="Settings" width="720">
 
-### 🧪 Dev mode
-A hidden toggle unlocks a model picker (force any specific provider/model per request, for testing), a live cost/usage tracker, and a raw request log — all invisible in normal use.
+### Developer Mode
+An internal toggle exposes a model picker (for forcing a specific provider/model per request during testing), a live cost/usage tracker, and a raw request log. None of this is visible in standard use.
 
 <img src="docs/screenshots/05-dev-mode-model-picker.png" alt="Dev mode model picker" width="720">
 <img src="docs/screenshots/07-model-selector.png" alt="Model selector" width="720">
@@ -183,21 +183,22 @@ Generated tools themselves are restricted to `httpx`, `beautifulsoup4`, and Pill
 
 ---
 
-## Standalone plans
+## Distribution Roadmap
 
-Currently a local FastAPI + React app you run yourself. The roadmap's last phase is packaging:
-- Windows installer + Start Menu shortcut (a basic version of this — `start.bat` + a shortcut script — already exists)
-- Docker option for non-Windows / server use
-- A setup wizard for API keys and model preferences
-- Public GitHub release, once the tool-builder sandbox has had a real security pass (right now it's a *process* sandbox — subprocess isolation + a domain allowlist — not a hardened security boundary, and that's an explicit gap before this should run untrusted-generated code for anyone but its own developer)
+Atlas currently runs as a local FastAPI + React application. The final phase of the roadmap addresses packaging and distribution:
 
-A **v2 standalone browser** (not just a tool that calls out to Playwright, but an actual browser shell Atlas lives inside) has been flagged as a future direction, not yet scoped.
+- Windows installer with Start Menu integration (an initial version — a launch script plus a shortcut installer — is already in place)
+- Docker support for non-Windows and server deployments
+- A setup wizard for API key configuration and model preferences
+- Public release, contingent on a security review of the tool-builder sandbox — the current implementation provides process isolation and a network domain allowlist, not a hardened security boundary, and should not execute untrusted generated code outside a single-developer context until that review is complete
+
+A standalone browser shell — Atlas as the browser itself, rather than a tool that drives Playwright — is under consideration as a longer-term direction and is not yet scoped.
 
 ---
 
-## Status
+## Project Status
 
-Actively developed, solo project, not yet packaged for distribution. Phases 1–10 of an 11-phase roadmap are built (model router, browser engine, memory, media generation, code sandbox, privacy layer, safe browsing, tool builder, agent loop, UI shell) — only packaging/distribution remains.
+In active development. Ten of eleven roadmap phases are complete — model routing, browser engine, memory, media generation, code sandbox, privacy layer, safe browsing, tool builder, agent loop, and UI shell — with packaging and distribution as the remaining milestone.
 
 ---
 
