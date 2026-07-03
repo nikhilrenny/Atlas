@@ -61,8 +61,8 @@ A hidden toggle unlocks a model picker (force any specific provider/model per re
 
 <img src="docs/screenshots/05-dev-mode-model-picker.png" alt="Dev mode model picker" width="720">
 <img src="docs/screenshots/07-model-selector.png" alt="Model selector" width="720">
-<img src="docs/screenshots/06-usage-widget.png" alt="Usage tracking" width="720">
-<img src="docs/screenshots/10-scripts-mode.png" alt="Scripts / request log" width="720">
+<img src="docs/screenshots/06-usage-widget.png" alt="Usage tracking" width="420">
+<img src="docs/screenshots/10-scripts-mode.png" alt="Scripts / request log" width="420">
 
 ---
 
@@ -99,3 +99,19 @@ A **v2 standalone browser** (not just a tool that calls out to Playwright, but a
 ## Status
 
 Actively developed, solo project, not yet packaged for distribution. Phases 1–10 of an 11-phase roadmap are built (model router, browser engine, memory, media generation, code sandbox, privacy layer, safe browsing, tool builder, agent loop, UI shell) — only packaging/distribution remains.
+
+---
+
+## Planned: command shortcuts (not yet live)
+
+An earlier UI pass added prefix commands to the search bar for jumping straight to a subsystem:
+
+| Prefix | Target |
+|---|---|
+| `~` | Tool Builder |
+| `#` | Memory |
+| `*` | Run a saved tool |
+| `/` | Browser |
+| `>` | Code IDE |
+
+These were pulled out when the AI intent pipeline (lookup/tool/agent detection) took over routing search-bar input — right now typing `~something` is just treated as ordinary search text, not a shortcut. Listed here as a planned re-add, not a current feature.
