@@ -66,21 +66,120 @@ A hidden toggle unlocks a model picker (force any specific provider/model per re
 
 ---
 
+## Architecture
+
+### Request flow
+
+```mermaid
+flowchart TD
+    A["Search bar input<br/>(or an Agent's own goal)"] --> B{"intake.assess()<br/>low-tier LLM: NIM &rarr; Ollama"}
+    B -->|"intent: lookup"| C["generator.generate_from_plan()<br/>high-tier LLM: Claude Pro &rarr; Claude API"]
+    B -->|"intent: tool"| C
+    B -->|"intent: agent"| D["planner.decompose()<br/>break goal into ordered steps"]
+    B -->|"clarify"| E["Ask a follow-up question,<br/>re-assess with the answer"]
+    B -->|"infeasible"| F["Report why, no LLM call wasted<br/>generating something that can't work"]
+    C --> G["executor.execute()<br/>sandboxed subprocess,<br/>domain allowlist"]
+    G -->|"lookup"| H["Run once &rarr; show result &rarr; discard code"]
+    G -->|"tool"| I["registry.register()<br/>SQLite, live, no restart &rarr; pin to homescreen"]
+    D --> J["executor.execute_run()<br/>steps run sequentially:<br/>tool / browse / lookup"]
+    J --> K["Per-step status + result,<br/>stop on first failure"]
+```
+
+### Tool Builder — how a page or a sentence becomes running code
+
+```mermaid
+flowchart TD
+    A["URL or free-text prompt"] --> B["classifier.classify()<br/>pattern: api_wrapper / data_extractor /<br/>calculator / file_processor / generic"]
+    B --> C["generator.generate_from_plan()<br/>one LLM call, plain-text<br/>===MANIFEST=== / ===CODE=== delimiters<br/>(not JSON-in-JSON — see note below)"]
+    C --> D["_ensure_imports()<br/>auto-repairs missing httpx / bs4 /<br/>PIL / base64 / io / json / re"]
+    D --> E["compile() syntax check"]
+    E -->|"fails"| C
+    E -->|"passes"| F["Sandbox harness<br/>writes harness.py + tool.py to a temp dir"]
+    F --> G["subprocess execution<br/>socket-level domain allowlist +<br/>default User-Agent injected<br/>(no security sandbox — process isolation only)"]
+    G --> H{"Exit 0?"}
+    H -->|"yes"| I["registry.register()<br/>tool is now live, callable, pinnable"]
+    H -->|"no"| J["Traceback bubbled up to the caller,<br/>not swallowed"]
+```
+
+The tool builder doesn't edit *its own* source — it writes brand-new, throwaway or saved Python files per request. Nothing it generates can modify Atlas's own backend/frontend code; the sandbox's domain allowlist and subprocess isolation exist specifically so generated code can't reach outside the one job it was written for.
+
+> **Why plain-text delimiters instead of JSON?** An earlier version had the LLM return `{"manifest": {...}, "code": "..."}` as one JSON blob, with the Python source embedded as a JSON string value. Weaker local models routinely broke this — unescaped backslashes/quotes inside the embedded code corrupted the JSON. Switching to `===MANIFEST===` / `===CODE===` plain-text sections removed the entire bug class instead of patching individual escape failures.
+
+### Project structure
+
+```
+atlas/
+├── backend/
+│   ├── app/
+│   │   ├── models/        # Phase 1 — router.py + one client per provider
+│   │   │   ├── router.py
+│   │   │   ├── ollama_client.py
+│   │   │   ├── nim_client.py
+│   │   │   ├── claude_api_client.py
+│   │   │   ├── claude_oauth_client.py
+│   │   │   └── usage_log.py
+│   │   ├── browser/        # Phase 2 — Playwright engine
+│   │   ├── search/         # Phase 3 — ChromaDB + BM25
+│   │   ├── media/          # Phase 4 — FLUX/GPT Image/Ideogram/RunwayML/ElevenLabs
+│   │   ├── ide/             # Phase 5 — sandbox runner, git ops, AI completion
+│   │   ├── privacy/        # Phase 6 — Tor proxy, fingerprint spoofing
+│   │   ├── safety/          # Phase 7 — Safe Browsing, VirusTotal, heuristics
+│   │   ├── toolbuilder/    # Phase 8 — classifier, generator, executor, registry
+│   │   ├── memory/         # Phase 9 — SQLite + ChromaDB two-tier store
+│   │   ├── agents/          # Phase 10 — store, planner, executor, scheduler
+│   │   ├── dev/              # Dev-mode: settings_store, diagnostics, activity_log
+│   │   └── api/               # FastAPI routes + Pydantic schemas
+│   └── venv/
+├── frontend/
+│   └── src/
+│       ├── App.jsx            # Shell: nav state, dev-mode toggle, overlay coordination
+│       ├── pages/            # HomePage, ToolBuilderPage, AgentsPage, BrowserPage
+│       └── components/     # Notch, ScriptsPanel, SettingsPanel, UsageWidget, ToolPanel
+├── data/                       # usage_log.jsonl, settings.json, memory.db, agents.db
+├── docs/                       # This README + screenshots
+└── start.bat                  # One-click launcher (backend + frontend)
+```
+
 ## APIs & models
 
-Atlas doesn't lock you into one model provider — it routes between them based on task complexity, and prefers free/local whenever the task allows it:
+Atlas doesn't lock you into one model provider — it routes between them based on task complexity, and prefers free/local whenever the task allows it.
 
-| Tier | Provider | Used for |
+### Routing tiers
+
+| Tier | Provider (in fallback order) | Used for |
 |---|---|---|
 | Embeddings | Ollama (`nomic-embed-text`, local) | Semantic memory search |
-| Low complexity | NVIDIA NIM → Ollama (`llama3.1:8b`) fallback | Feasibility checks, classification, intent detection |
-| High complexity | Claude Pro (OAuth, free) → Claude API (Sonnet/Haiku) fallback | Tool/code generation, goal decomposition |
+| Low complexity | NVIDIA NIM &rarr; Ollama (`llama3.1:8b`) | Feasibility checks, classification, intent detection |
+| High complexity | Claude Pro (OAuth, free) &rarr; Claude API | Tool/code generation, goal decomposition |
 
-Other integrations, all optional and degrade gracefully with no key configured:
-- **Media**: FLUX (local, via ComfyUI), GPT Image, Ideogram, RunwayML (video), ElevenLabs (TTS)
-- **Browsing**: Playwright (headless Chromium) for JS-rendered pages, form fill/extract, screenshots
-- **Safety**: Google Safe Browsing v4, VirusTotal v3, plus a zero-dependency local phishing heuristic that works with no keys at all
-- **Generated tools**: sandboxed access to `httpx`, `beautifulsoup4`, and Pillow only — nothing else is importable from inside a generated tool
+### Every model currently wired up (dev-mode model picker)
+
+| Provider | Models |
+|---|---|
+| Ollama (local) | `llama3.1:8b` (default), `qwen3.5:9b` (opt-in — defaults into a thinking-mode spiral, not used as a router default) |
+| NVIDIA NIM | `meta/llama-3.3-70b-instruct` |
+| Claude API | `claude-haiku-4-5`, `claude-sonnet-4-6` |
+| Claude Pro (OAuth) | `claude-oauth` (routes to whatever model the Pro subscription serves via Claude Code) |
+
+### Other API integrations
+
+All optional, all degrade gracefully with no key configured:
+
+| Category | Provider | Notes |
+|---|---|---|
+| Image generation | FLUX (local, via ComfyUI) | Runs entirely on-device, no API cost |
+| Image generation | GPT Image (OpenAI) | Cloud, replaces an earlier DALL-E 3 integration after OpenAI deprecated it |
+| Image generation | Ideogram | Cloud |
+| Video generation | RunwayML (`gen4_turbo`) | Cloud |
+| Voice | ElevenLabs (TTS) | Cloud |
+| Browsing | Playwright (headless Chromium) | JS-rendered pages, form fill/extract, screenshots |
+| Privacy | Tor (SOCKS5 proxy) | Opt-in per request, off by default |
+| Safety | Google Safe Browsing v4 | Falls back to local heuristics with no key |
+| Safety | VirusTotal v3 | Falls back to local heuristics with no key |
+| Reference data | Wikipedia REST API (`summary`, `media-list`, `search/page`) | Used *inside* generated lookup tools, not by Atlas's own backend directly |
+
+Generated tools themselves are restricted to `httpx`, `beautifulsoup4`, and Pillow — nothing else is importable from inside sandboxed code, regardless of what the model tries to write.
+
 
 ---
 
