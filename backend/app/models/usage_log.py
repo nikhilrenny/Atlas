@@ -80,6 +80,11 @@ class UsageLog:
         with open(self.path, "r", encoding="utf-8") as f:
             return [json.loads(line) for line in f if line.strip()]
 
+    def reset(self) -> None:
+        """Truncates the log -- used by the Settings panel's 'reset usage log' action."""
+        with open(self.path, "w", encoding="utf-8"):
+            pass
+
     def summary(self) -> dict:
         """Quick aggregate: total cost, total calls, calls/cost broken down by provider."""
         rows = self.read_all()

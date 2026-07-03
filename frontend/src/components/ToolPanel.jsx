@@ -59,6 +59,54 @@ function InputField({ field, value, onChange }) {
   );
 }
 
+function stripHtml(s) {
+  return typeof s === "string" ? s.replace(/<[^>]*>/g, "").trim() : s;
+}
+
+function EntityCard({ data }) {
+  const images = Array.isArray(data.images) ? data.images.filter(Boolean) : [];
+  return (
+    <div className="entity-card">
+      <div className="entity-card-top">
+        {data.image && <img className="entity-card-image" src={data.image} alt={stripHtml(data.title) || ""} />}
+        <div className="entity-card-heading">
+          {data.title && <h4 className="entity-card-title">{stripHtml(data.title)}</h4>}
+          {data.summary && <p className="entity-card-summary">{stripHtml(data.summary)}</p>}
+        </div>
+      </div>
+      {images.length > 0 && (
+        <div className="entity-card-gallery">
+          {images.map((src, i) => (
+            <img key={i} className="entity-gallery-thumb" src={src} alt="" loading="lazy" />
+          ))}
+        </div>
+      )}
+      {Array.isArray(data.facts) && data.facts.length > 0 && (
+        <div className="entity-card-facts">
+          {data.facts.map((f, i) => (
+            <div className="entity-fact" key={i}>
+              <span className="entity-fact-label">{stripHtml(f.label)}</span>
+              <span className="entity-fact-value">{stripHtml(f.value)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {Array.isArray(data.related) && data.related.length > 0 && (
+        <div className="entity-card-related">
+          {data.related.map((r, i) => <span className="entity-related-pill" key={i}>{stripHtml(r)}</span>)}
+        </div>
+      )}
+      {data.source && <a className="entity-card-source" href={data.source} target="_blank" rel="noopener noreferrer">View source</a>}
+    </div>
+  );
+}
+
+function isEntityShape(data) {
+  return data && typeof data === "object" && !Array.isArray(data) &&
+    (typeof data.title === "string" || typeof data.summary === "string") &&
+    !("columns" in data && "rows" in data); // don't collide with the table shape
+}
+
 function OutputPanel({ outputType, data }) {
   if (data == null) return null;
   if (outputType === "image") {
@@ -82,6 +130,9 @@ function OutputPanel({ outputType, data }) {
         </tbody>
       </table>
     );
+  }
+  if (outputType === "json" && isEntityShape(data)) {
+    return <EntityCard data={data} />;
   }
   if (outputType === "json") {
     return <pre className="tb-json">{JSON.stringify(data, null, 2)}</pre>;

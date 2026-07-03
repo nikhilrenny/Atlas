@@ -39,14 +39,18 @@ Respond with ONLY a single JSON object, no markdown fences, no commentary, in ex
 of these three shapes:
 
 Missing information you can't reasonably default (e.g. "weather widget" with no location
-given and no sensible global default):
-{{"status": "clarify", "questions": ["short question 1", "short question 2"]}}
+given and no sensible global default). For each question, if it naturally has a small set
+of likely answers (yes/no, or a short list of choices), include an "options" array of 2-4
+short strings the user can click instead of typing. If it's genuinely open-ended (a name, a
+location, anything with no small fixed set of answers), set "options" to null:
+{{"status": "clarify", "questions": [{{"question": "short question 1", "options": ["Yes", "No"]}},
+                                     {{"question": "short question 2", "options": null}}]}}
 
 Request can't be satisfied within the constraints above:
 {{"status": "infeasible", "reason": "one sentence, plain language, no jargon"}}
 
 Buildable as-is or after reasonable defaults:
-{{"status": "ready", "intent": "lookup|tool", "plan": {{
+{{"status": "ready", "intent": "lookup|tool|agent", "plan": {{
   "name": "short tool name",
   "description": "one sentence",
   "pattern": "{patterns}",
@@ -57,14 +61,20 @@ Buildable as-is or after reasonable defaults:
 }}}}
 
 Deciding "intent": this determines whether the build gets saved as a reusable tool in the
-user's sidebar, or just runs once and shows the answer. Use "tool" only when the request
-explicitly asks for something to build/save/reuse -- "build me a...", "make a widget for...",
-"create a converter", "I want a tool that...". Use "lookup" for anything phrased as a direct
-question or one-time request for information -- "what's the weather in Paris", "tell me
-about The Weeknd", "get me everything on X", "how many calories in...". When intent is
-"lookup", every input should end up with a "default" set (per the rule below) since there's
+user's sidebar, runs once and shows the answer, or hands off to Atlas's multi-step agent.
+Use "tool" only when the request explicitly asks for something to build/save/reuse --
+"build me a...", "make a widget for...", "create a converter", "I want a tool that...".
+Use "lookup" for a single direct question or one-time request for information --
+"what's the weather in Paris", "tell me about The Weeknd", "how many calories in...".
+Use "agent" when the request chains multiple distinct actions or implies a sequence --
+"check the weather in London and save it to memory", "look up X, then find Y", "do A and
+then B". Don't use "agent" just because a request sounds complex -- reserve it for requests
+that actually name more than one step. When intent is "agent" the plan object can be
+minimal (name/description only matter) since no code gets generated for it -- Atlas's
+agent planner handles the actual step breakdown separately. When intent is "lookup", every
+input should end up with a "default" set (per the rule below) since there's
 no user-facing form -- the tool runs immediately with those defaults and returns the result.
-If genuinely unsure, prefer "lookup" -- it's the lower-commitment choice.
+If genuinely unsure between lookup and tool, prefer "lookup" -- it's the lower-commitment choice.
 
 If the user's request already names a specific value for an input (e.g. "music artist the
 weekend" naming The Weeknd, or "weather in Paris" naming Paris), set that input's "default"
@@ -98,9 +108,9 @@ def _extract_json(raw: str) -> dict:
         return json.loads(repaired)
 
 
-async def assess(prompt: str, force_decide: bool = False) -> dict:
+async def assess(prompt: str, force_decide: bool = False, force_provider: str | None = None, force_model: str | None = None) -> dict:
     """Returns one of:
-      {"status": "clarify", "questions": [...]}
+      {"status": "clarify", "questions": [{"question": str, "options": list[str]|None}, ...]}
       {"status": "infeasible", "reason": "..."}
       {"status": "ready", "intent": "lookup"|"tool", "plan": {...}}
     """
@@ -118,7 +128,7 @@ async def assess(prompt: str, force_decide: bool = False) -> dict:
     last_err = None
     for attempt in range(2):
         try:
-            raw = await model_router.complete(full_prompt, complexity="low")
+            raw = await model_router.complete(full_prompt, complexity="low", force_provider=force_provider, force_model=force_model)
             parsed = _extract_json(raw)
             status = parsed.get("status")
             if status not in ("clarify", "infeasible", "ready"):
@@ -126,6 +136,14 @@ async def assess(prompt: str, force_decide: bool = False) -> dict:
             if status == "clarify" and force_decide:
                 # model ignored the instruction -- don't loop forever, treat as infeasible
                 return {"status": "infeasible", "reason": "Couldn't pin down enough detail to build this automatically."}
+            if status == "clarify":
+                # Normalize: a weaker model may still return plain strings instead of
+                # {"question":..., "options":...} objects -- coerce either shape to the latter
+                # so the frontend never has to guess which one it got.
+                parsed["questions"] = [
+                    q if isinstance(q, dict) else {"question": str(q), "options": None}
+                    for q in parsed.get("questions", [])
+                ]
             return parsed
         except Exception as e:
             last_err = e

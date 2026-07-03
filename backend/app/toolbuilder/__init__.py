@@ -27,23 +27,23 @@ from .manifest import ToolManifest
 from .registry import registry
 
 
-async def build_from_url(url: str) -> ToolManifest:
+async def build_from_url(url: str, force_provider: str | None = None, force_model: str | None = None) -> ToolManifest:
     log.info("[toolbuilder] fetch: %s", url)
     page = await browser_engine.fetch(url)
     log.info("[toolbuilder] fetched — title: %r", page.get("title"))
     log.info("[toolbuilder] classifying page...")
-    pattern = await classify(url, page["title"], page["text"])
+    pattern = await classify(url, page["title"], page["text"], force_provider=force_provider, force_model=force_model)
     log.info("[toolbuilder] pattern: %s", pattern)
     host = urlparse(url).netloc
     log.info("[toolbuilder] generating code (high tier)...")
-    manifest, code = await generate(url, page["title"], page["text"], pattern, [host] if host else [])
+    manifest, code = await generate(url, page["title"], page["text"], pattern, [host] if host else [], force_provider=force_provider, force_model=force_model)
     log.info("[toolbuilder] generated: %r  inputs: %s  output_type: %s", manifest.name, [i.name for i in manifest.inputs], manifest.output_type)
     registry.register(manifest, code)
     log.info("[toolbuilder] registered as %s", manifest.id)
     return manifest
 
 
-async def build_from_prompt(prompt: str, answers: str | None = None, round: int = 0) -> dict:
+async def build_from_prompt(prompt: str, answers: str | None = None, round: int = 0, force_provider: str | None = None, force_model: str | None = None) -> dict:
     """Returns one of:
       {"status": "clarify", "questions": [...]}
       {"status": "infeasible", "reason": "..."}
@@ -62,7 +62,7 @@ async def build_from_prompt(prompt: str, answers: str | None = None, round: int 
         log.info("[toolbuilder] injecting memory context (%d memories, %d preferences)",
                  len(mem_context["memories"]), len(mem_context["preferences"]))
 
-    assessment = await assess(context_prompt, force_decide=force_decide)
+    assessment = await assess(context_prompt, force_decide=force_decide, force_provider=force_provider, force_model=force_model)
     log.info("[toolbuilder] assessment: status=%s  intent=%s", assessment.get("status"), assessment.get("intent"))
 
     if assessment["status"] == "infeasible":
@@ -74,8 +74,13 @@ async def build_from_prompt(prompt: str, answers: str | None = None, round: int 
 
     plan = assessment["plan"]
     intent = assessment.get("intent", "tool")
+
+    if intent == "agent":
+        log.info("[toolbuilder] intent=agent -- handing off to Atlas's agent planner, no code generated")
+        return {"status": "agent", "goal": prompt}
+
     log.info("[toolbuilder] generating code (high tier)  intent=%s  pattern=%s  domains=%s", intent, plan.get("pattern"), plan.get("target_domains"))
-    manifest, code = await generate_from_plan(combined, plan)
+    manifest, code = await generate_from_plan(combined, plan, force_provider=force_provider, force_model=force_model)
     log.info("[toolbuilder] generated: %r  inputs: %s  output_type: %s", manifest.name, [i.name for i in manifest.inputs], manifest.output_type)
 
     if intent == "lookup":

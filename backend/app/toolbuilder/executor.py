@@ -48,6 +48,22 @@ def _guarded_getaddrinfo(host, *a, **kw):
     return _orig_getaddrinfo(host, *a, **kw)
 socket.getaddrinfo = _guarded_getaddrinfo
 
+# Many real sites (Wikipedia's REST API included) 403 anonymous/generic HTTP clients --
+# httpx sends no User-Agent by default. Rather than rely on every generated tool
+# remembering to set one, patch a sane default into every httpx.AsyncClient the tool
+# creates; setdefault so a tool that DOES set its own header isn't overridden.
+try:
+    import httpx
+    _orig_client_init = httpx.AsyncClient.__init__
+    def _patched_client_init(self, *a, **kw):
+        headers = dict(kw.pop("headers", None) or {})
+        headers.setdefault("User-Agent", "Atlas/1.0 (personal AI browser; +https://github.com/nikhilrenny/Atlas)")
+        kw["headers"] = headers
+        _orig_client_init(self, *a, **kw)
+    httpx.AsyncClient.__init__ = _patched_client_init
+except ImportError:
+    pass
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tool
 

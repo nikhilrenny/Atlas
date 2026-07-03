@@ -24,6 +24,14 @@ from app.api.schemas import (
     EmbedRequest,
     EmbedResponse,
     ModelsStatusResponse,
+    DevModelsResponse,
+    DevCompleteRequest,
+    DevCompleteResponse,
+    DevActivityResponse,
+    DevUsageResponse,
+    SettingsResponse,
+    SettingsUpdateRequest,
+    DiagnosticsResponse,
     BrowserFetchRequest,
     BrowserFetchResponse,
     BrowserScreenshotRequest,
@@ -75,8 +83,10 @@ router = APIRouter()
 
 @router.post("/chat", response_model=CompleteResponse)
 async def chat(req: CompleteRequest):
+    from app.dev import settings_store
+    prefer_free = req.prefer_free if req.prefer_free is not None else settings_store.get_all()["prefer_free"]
     try:
-        result = await model_router.complete_verbose(req.prompt, complexity=req.complexity)
+        result = await model_router.complete_verbose(req.prompt, complexity=req.complexity, prefer_free=prefer_free)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return CompleteResponse(**result)
@@ -100,10 +110,72 @@ async def models_status():
     )
 
 
+@router.get("/dev/models", response_model=DevModelsResponse)
+async def dev_models():
+    return DevModelsResponse(**await model_router.available_models())
+
+
+@router.post("/dev/complete", response_model=DevCompleteResponse)
+async def dev_complete(req: DevCompleteRequest):
+    try:
+        result = await model_router.complete_direct(req.prompt, req.provider, model=req.model)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return DevCompleteResponse(**result)
+
+
+@router.get("/dev/activity", response_model=DevActivityResponse)
+async def dev_activity(after_id: int = 0, limit: int = 200):
+    from app.dev import activity_log
+    return DevActivityResponse(entries=activity_log.recent(after_id=after_id, limit=limit))
+
+
+@router.get("/dev/usage", response_model=DevUsageResponse)
+async def dev_usage():
+    from app.models.usage_log import usage_log
+    return DevUsageResponse(**usage_log.summary())
+
+
+@router.post("/dev/usage/reset")
+async def dev_usage_reset():
+    from app.models.usage_log import usage_log
+    usage_log.reset()
+    return {"reset": True}
+
+
+# --- Settings panel ---
+
+@router.get("/settings", response_model=SettingsResponse)
+async def get_settings():
+    from app.dev import settings_store
+    return SettingsResponse(**settings_store.get_all())
+
+
+@router.post("/settings", response_model=SettingsResponse)
+async def update_settings(req: SettingsUpdateRequest):
+    from app.dev import settings_store
+    updated = settings_store.update(req.model_dump(exclude_none=True))
+    return SettingsResponse(**updated)
+
+
+@router.get("/settings/diagnostics", response_model=DiagnosticsResponse)
+async def settings_diagnostics():
+    from app.dev import diagnostics
+    models = await model_router.available_models()
+    gpu = await diagnostics.gpu_info()
+    return DiagnosticsResponse(**models, gpu=gpu)
+
+
 @router.post("/browser/fetch", response_model=BrowserFetchResponse)
 async def browser_fetch(req: BrowserFetchRequest):
+    from app.dev import settings_store
+    settings = settings_store.get_all()
+    tor = req.tor if req.tor is not None else settings["default_tor"]
+    stealth = req.stealth if req.stealth is not None else settings["default_stealth"]
+    block_unsafe = req.block_unsafe if req.block_unsafe is not None else settings["default_block_unsafe"]
+
     safety_result = None
-    if req.block_unsafe:
+    if block_unsafe:
         verdict = await safety_checker.check_url(req.url)
         safety_result = SafetyCheckResponse(**verdict)
         if safety_result.verdict == "dangerous":
@@ -113,7 +185,7 @@ async def browser_fetch(req: BrowserFetchRequest):
             )
 
     try:
-        result = await browser_engine.fetch(req.url, tor=req.tor, stealth=req.stealth)
+        result = await browser_engine.fetch(req.url, tor=tor, stealth=stealth)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -129,9 +201,13 @@ async def browser_fetch(req: BrowserFetchRequest):
 
 @router.post("/browser/screenshot", response_model=BrowserScreenshotResponse)
 async def browser_screenshot(req: BrowserScreenshotRequest):
+    from app.dev import settings_store
+    settings = settings_store.get_all()
+    tor = req.tor if req.tor is not None else settings["default_tor"]
+    stealth = req.stealth if req.stealth is not None else settings["default_stealth"]
     try:
         png_bytes = await browser_engine.screenshot(
-            req.url, full_page=req.full_page, tor=req.tor, stealth=req.stealth
+            req.url, full_page=req.full_page, tor=tor, stealth=stealth
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -291,7 +367,7 @@ async def safety_check(req: SafetyCheckRequest):
 @router.post("/toolbuilder/generate", response_model=ToolManifestResponse)
 async def toolbuilder_generate(req: ToolBuildRequest):
     try:
-        manifest = await toolbuilder.build_from_url(req.url)
+        manifest = await toolbuilder.build_from_url(req.url, force_provider=req.force_provider, force_model=req.force_model)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return ToolManifestResponse(**manifest.model_dump())
@@ -342,10 +418,14 @@ async def toolbuilder_pin(tool_id: str, req: ToolPinRequest):
 @router.post("/toolbuilder/build_from_prompt", response_model=PromptBuildResponse)
 async def toolbuilder_build_from_prompt(req: PromptBuildRequest):
     try:
-        result = await toolbuilder.build_from_prompt(req.prompt, answers=req.answers, round=req.round)
+        result = await toolbuilder.build_from_prompt(req.prompt, answers=req.answers, round=req.round, force_provider=req.force_provider, force_model=req.force_model)
     except Exception as e:
         log.error("[toolbuilder] build_from_prompt failed: %s\n%s", e, traceback.format_exc())
         raise HTTPException(status_code=502, detail=str(e) or f"{type(e).__name__} (see server log)")
+    if result["status"] == "agent":
+        from app import agents as atlas_agents
+        run_id = atlas_agents.start_run(result["goal"], force_provider=req.force_provider, force_model=req.force_model)
+        return PromptBuildResponse(status="agent_started", agent_run_id=run_id)
     if result["status"] == "ready":
         return PromptBuildResponse(status="ready", tool=ToolManifestResponse(**result["manifest"].model_dump()))
     if result["status"] == "answered":
@@ -370,6 +450,12 @@ async def memory_search_get(q: str, limit: int = 5):
     return MemoryListResponse(memories=records, total=len(records))
 
 
+@router.delete("/memory/clear")
+async def memory_clear(type: str | None = None):
+    n = atlas_memory.clear_all(type_=type)
+    return {"cleared": n}
+
+
 @router.delete("/memory/{memory_id}")
 async def memory_delete(memory_id: str):
     if not atlas_memory.delete_memory(memory_id):
@@ -389,3 +475,61 @@ async def memory_preferences():
 async def memory_set_preference(req: SetPreferenceRequest):
     atlas_memory.set_preference(req.key, req.value, source="explicit")
     return {"set": req.key, "value": req.value}
+
+
+# --- Phase 10: Agents ---
+
+from app import agents as atlas_agents
+from app.api.schemas import (
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentRunListResponse,
+    AgentScheduleRequest,
+    AgentScheduleResponse,
+    AgentScheduleListResponse,
+)
+
+
+@router.post("/agents/run", response_model=AgentRunResponse)
+async def agents_run(req: AgentRunRequest):
+    run_id = atlas_agents.start_run(req.goal, force_provider=req.force_provider, force_model=req.force_model)
+    run = atlas_agents.get_run(run_id)
+    return AgentRunResponse(**run)
+
+
+@router.get("/agents/runs", response_model=AgentRunListResponse)
+async def agents_list_runs(limit: int = 50):
+    return AgentRunListResponse(runs=[AgentRunResponse(**r, steps=[]) for r in atlas_agents.list_runs(limit=limit)])
+
+
+@router.get("/agents/runs/{run_id}", response_model=AgentRunResponse)
+async def agents_get_run(run_id: str):
+    run = atlas_agents.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return AgentRunResponse(**run)
+
+
+@router.post("/agents/schedule", response_model=AgentScheduleResponse)
+async def agents_create_schedule(req: AgentScheduleRequest):
+    job = atlas_agents.create_schedule(req.goal, req.recurrence)
+    return AgentScheduleResponse(**job)
+
+
+@router.get("/agents/schedule", response_model=AgentScheduleListResponse)
+async def agents_list_schedules():
+    return AgentScheduleListResponse(schedules=[AgentScheduleResponse(**s) for s in atlas_agents.list_schedules()])
+
+
+@router.delete("/agents/schedule/{job_id}")
+async def agents_delete_schedule(job_id: str):
+    if not atlas_agents.delete_schedule(job_id):
+        raise HTTPException(status_code=404, detail="schedule not found")
+    return {"deleted": job_id}
+
+
+@router.post("/agents/schedule/{job_id}/toggle")
+async def agents_toggle_schedule(job_id: str, enabled: bool):
+    if not atlas_agents.set_schedule_enabled(job_id, enabled):
+        raise HTTPException(status_code=404, detail="schedule not found")
+    return {"id": job_id, "enabled": enabled}

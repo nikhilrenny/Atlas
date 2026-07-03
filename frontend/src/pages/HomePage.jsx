@@ -1,34 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { OutputPanel } from "../components/ToolPanel";
+import ToolPanel, { OutputPanel } from "../components/ToolPanel";
 
 const API = "http://127.0.0.1:8765/api";
 
-const COMMANDS = {
-  "~": { label: "Tool Builder", placeholder: "Describe a tool to build…" },
-  "#": { label: "Memory",       placeholder: "Search your memory…" },
-  "*": { label: "Run tool",     placeholder: "Tool name…" },
-  "/": { label: "Browse",       placeholder: "URL to open…" },
-  ">": { label: "IDE",          placeholder: "Describe what to code…" },
-};
-
-function parseInput(raw) {
-  const first = raw[0];
-  if (COMMANDS[first]) return { prefix: first, body: raw.slice(1).trimStart() };
-  return { prefix: null, body: raw };
-}
-
-function CommandHints() {
-  return (
-    <div className="cmd-command-list">
-      {Object.entries(COMMANDS).map(([k, v]) => (
-        <div key={k} className="cmd-command-item">
-          <span className="cmd-command-key">{k}</span>
-          <span className="cmd-command-desc">{v.label}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+// Commands (~ # * / >) removed for now — all input goes through the AI intent
+// pipeline below (build_from_prompt), which decides itself whether the request
+// is a one-off lookup or something to save as a reusable tool.
 
 function cleanMemoryContent(content) {
   // Strip "Ran tool 'X' with {...} → ..." down to just the tool name + result
@@ -43,17 +20,18 @@ function cleanMemoryContent(content) {
   return content.slice(0, 60);
 }
 
-export default function HomePage({ onNavigate }) {
+export default function HomePage({ onNavigate, devMode }) {
   const [raw, setRaw]           = useState("");
   const [focused, setFocused]   = useState(false);
   const [working, setWorking]   = useState(false);
   const [result, setResult]     = useState(null); // {output_type, data, error}
   const [recentMem, setRecentMem] = useState([]);
   const [dropdownArmed, setDropdownArmed] = useState(false);
+  const [devModels, setDevModels] = useState(null); // {provider: {available, models}}
+  const [devPick, setDevPick] = useState(""); // "provider::model"
+  const [devListOpen, setDevListOpen] = useState(false);
+  const [answers, setAnswers] = useState({});
   const inputRef = useRef(null);
-
-  const { prefix, body } = parseInput(raw);
-  const command = COMMANDS[prefix];
 
   useEffect(() => {
     fetch(`${API}/memory?limit=5`)
@@ -61,6 +39,18 @@ export default function HomePage({ onNavigate }) {
       .then(d => setRecentMem(d.memories || []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!devMode || devModels) return;
+    fetch(`${API}/dev/models`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(d => {
+        setDevModels(d);
+        const first = Object.entries(d).find(([, v]) => v.available && v.models.length);
+        if (first) setDevPick(`${first[0]}::${first[1].models[0]}`);
+      })
+      .catch(e => setDevModels({ _error: e.message }));
+  }, [devMode, devModels]);
 
   const showDropdown = focused && !working && !result;
 
@@ -70,9 +60,7 @@ export default function HomePage({ onNavigate }) {
     return () => clearTimeout(t);
   }, [showDropdown]);
 
-  const placeholder = command
-    ? command.placeholder
-    : "Ask anything…";
+  const placeholder = "Ask anything…";
 
   const handleKey = async (e) => {
     if (e.key !== "Enter" || !raw.trim()) return;
@@ -80,41 +68,51 @@ export default function HomePage({ onNavigate }) {
     await run();
   };
 
-  const run = async () => {
-    const { prefix, body } = parseInput(raw);
-    if (!body && !prefix) return;
+  const runBuild = async (promptText, answerText, roundNum) => {
+    const [force_provider, force_model] = devMode && devPick ? devPick.split("::") : [undefined, undefined];
     setResult(null);
-
-    if (prefix === "~") { onNavigate("toolbuilder", body); return; }
-    if (prefix === "/") { onNavigate("browser", body || raw.slice(1).trim()); return; }
-    if (prefix === ">") { onNavigate("ide", body); return; }
-    if (prefix === "#") { onNavigate("memory", body); return; }
-    if (prefix === "*") { onNavigate("run_tool", body); return; }
-
-    // default: lookup
     setWorking(true);
     try {
       const res = await fetch(`${API}/toolbuilder/build_from_prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: raw.trim() }),
+        body: JSON.stringify({ prompt: promptText, answers: answerText || null, round: roundNum, force_provider, force_model }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "failed");
       if (data.status === "answered") {
         setResult({ output_type: data.output_type, data: data.data });
+      } else if (data.status === "agent_started") {
+        onNavigate("agents", data.agent_run_id);
       } else if (data.status === "clarify") {
-        setResult({ clarify: data.questions });
+        setAnswers({});
+        setResult({ clarify: data.questions, clarifyPrompt: promptText, clarifyRound: roundNum + 1 });
       } else if (data.status === "infeasible") {
         setResult({ error: data.reason });
       } else if (data.status === "ready") {
-        onNavigate("toolbuilder", "");
+        setResult({ tool: data.tool });
       }
     } catch (err) {
       setResult({ error: err.message });
     } finally {
       setWorking(false);
     }
+  };
+
+  const run = async () => {
+    // Dev-only shortcut: "£name" opens a hardcoded sample/demo page (e.g. "£kaizen").
+    if (raw.trim().startsWith("£")) {
+      onNavigate("sample", raw.trim().slice(1).trim());
+      return;
+    }
+    if (!raw.trim()) return;
+    await runBuild(raw.trim(), null, 0);
+  };
+
+  const submitClarifyAnswers = async () => {
+    if (!result?.clarify) return;
+    const answerText = result.clarify.map((q, i) => `${q.question} ${answers[i] || "(no answer)"}`).join("; ");
+    await runBuild(result.clarifyPrompt, answerText, result.clarifyRound);
   };
 
   return (
@@ -124,7 +122,6 @@ export default function HomePage({ onNavigate }) {
       <div className="cmd-wrap">
         <div className={`cmd-card ${focused ? "focused" : ""}`}>
           <div className="cmd-inner">
-            {prefix && <span className="cmd-prefix-badge">{prefix} {command?.label}</span>}
             <input
               ref={inputRef}
               className="cmd-input"
@@ -156,6 +153,43 @@ export default function HomePage({ onNavigate }) {
           </div>
         </div>
 
+        {devMode && (
+          <div className="dev-model-row">
+            <span className="dev-model-badge">DEV</span>
+            <div
+              className="dev-model-pill"
+              onClick={() => setDevListOpen(o => !o)}
+            >
+              <span>{devModels?._error ? `error: ${devModels._error}` : devPick ? devPick.replace("::", " · ") : devModels ? "no models available" : "loading models…"}</span>
+              <svg viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </div>
+            {devListOpen && devModels && !devModels._error && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setDevListOpen(false)} />
+                <div className="dev-model-list">
+                  {Object.entries(devModels).filter(([, info]) => info.available).map(([provider, info]) => (
+                    <div key={provider}>
+                      <p className="dev-model-group-label">{provider}</p>
+                      {info.models.map(m => {
+                        const value = `${provider}::${m}`;
+                        return (
+                          <div
+                            key={value}
+                            className={`dev-model-option ${devPick === value ? "active" : ""}`}
+                            onClick={() => { setDevPick(value); setDevListOpen(false); }}
+                          >
+                            {m}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {showDropdown && (
           <div className={`cmd-dropdown ${dropdownArmed ? "" : "cmd-dropdown-arming"}`}>
             {recentMem.length > 0 && (
@@ -173,8 +207,6 @@ export default function HomePage({ onNavigate }) {
                 ))}
               </>
             )}
-            <p className="cmd-section-label">Commands</p>
-            <CommandHints />
           </div>
         )}
 
@@ -193,8 +225,56 @@ export default function HomePage({ onNavigate }) {
 
         {result?.clarify && (
           <div className="home-result">
-            <p style={{ marginBottom: "0.5rem", fontWeight: 500 }}>A couple of things:</p>
-            {result.clarify.map((q, i) => <p key={i} style={{ color: "var(--text-3)", fontSize: "0.82rem" }}>· {q}</p>)}
+            <p style={{ marginBottom: "0.6rem", fontWeight: 500 }}>A couple of things:</p>
+            {result.clarify.map((q, i) => (
+              <div key={i} className="tb-field" style={{ marginBottom: "0.6rem" }}>
+                <span>{q.question}</span>
+                {q.options?.length ? (
+                  <div className="clarify-options">
+                    {q.options.map(opt => (
+                      <button
+                        key={opt}
+                        type="button"
+                        className={`clarify-option ${answers[i] === opt ? "active" : ""}`}
+                        onClick={() => setAnswers(a => ({ ...a, [i]: opt }))}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <input
+                    value={answers[i] || ""}
+                    onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))}
+                    onKeyDown={e => e.key === "Enter" && submitClarifyAnswers()}
+                    autoFocus={i === 0}
+                  />
+                )}
+              </div>
+            ))}
+            <button className="btn-primary" onClick={submitClarifyAnswers} disabled={working} style={{ marginTop: "0.3rem" }}>
+              {working ? "Working…" : "Continue"}
+            </button>
+          </div>
+        )}
+
+        {result?.tool && (
+          <div className="home-result">
+            <ToolPanel
+              manifest={result.tool}
+              onDelete={async (id) => {
+                await fetch(`${API}/toolbuilder/tools/${id}`, { method: "DELETE" });
+                setResult(null);
+              }}
+              onTogglePin={async (id, pinned) => {
+                await fetch(`${API}/toolbuilder/tools/${id}/pin`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ pinned }),
+                });
+                setResult(r => ({ tool: { ...r.tool, pinned } }));
+              }}
+            />
           </div>
         )}
 

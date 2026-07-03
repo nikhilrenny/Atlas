@@ -12,9 +12,10 @@ import time
 from enum import Enum
 
 from .ollama_client import OllamaClient
-from .nim_client import NIMClient
+from .nim_client import NIMClient, DEFAULT_MODEL as NIM_DEFAULT_MODEL
 from .claude_api_client import ClaudeAPIClient, DEFAULT_HIGH_MODEL
 from .claude_oauth_client import ClaudeOAuthClient
+from .openai_client import OpenAIClient
 from .usage_log import usage_log
 
 logger = logging.getLogger("atlas.router")
@@ -32,6 +33,7 @@ class ModelRouter:
         self.nim = NIMClient()
         self.claude_api = ClaudeAPIClient()
         self.claude_oauth = ClaudeOAuthClient()
+        self.openai = OpenAIClient()
 
     def classify(self, prompt: str, complexity: str | None = None) -> Complexity:
         if complexity:
@@ -136,7 +138,59 @@ class ModelRouter:
                 error=error,
             )
 
-    async def complete(self, prompt: str, complexity: str | None = None, prefer_free: bool = True, **kwargs) -> str:
+    async def available_models(self) -> dict:
+        """Aggregates every model Atlas can currently reach, grouped by provider —
+        used by the dev-mode model picker so a specific model can be tested directly,
+        bypassing the normal complexity-based routing."""
+        ollama_models = []
+        try:
+            if await self.ollama.is_available():
+                ollama_models = [m for m in await self.ollama.list_models() if "embed" not in m.lower()]
+        except Exception:
+            ollama_models = []
+        return {
+            "ollama": {"available": bool(ollama_models), "models": ollama_models},
+            "nim": {"available": self.nim.is_available(), "models": [NIM_DEFAULT_MODEL] if self.nim.is_available() else []},
+            "claude_api": {"available": self.claude_api.is_available(), "models": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"] if self.claude_api.is_available() else []},
+            "claude_oauth": {"available": True, "models": ["claude-oauth"]},
+            "openai": {"available": self.openai.is_available(), "models": ["gpt-4o-mini", "gpt-4o"] if self.openai.is_available() else []},
+        }
+
+    async def complete_direct(self, prompt: str, provider: str, model: str | None = None, **kwargs) -> dict:
+        """Dev-mode only: calls a specific provider/model directly, skipping classify()
+        and all fallback logic, so each model can be exercised in isolation."""
+        start = time.perf_counter()
+        text = None
+        error = None
+        try:
+            if provider == "ollama":
+                text = await self.ollama.complete(prompt, model=model or "llama3.1:8b", **kwargs)
+            elif provider == "nim":
+                text = await self.nim.complete(prompt, model=model or NIM_DEFAULT_MODEL, timeout=30.0, **kwargs)
+            elif provider == "claude_api":
+                text = await self.claude_api.complete(prompt, model=model or DEFAULT_HIGH_MODEL, **kwargs)
+            elif provider == "claude_oauth":
+                text = await self.claude_oauth.complete(prompt, **kwargs)
+            elif provider == "openai":
+                text = await self.openai.complete(prompt, model=model or "gpt-4o-mini", **kwargs)
+            else:
+                raise ValueError(f"unknown provider: {provider!r}")
+            return {"text": text, "provider": provider, "model": model}
+        except Exception as e:
+            error = str(e)
+            raise
+        finally:
+            usage_log.record(
+                provider=f"dev:{provider}", complexity="dev",
+                latency_ms=(time.perf_counter() - start) * 1000,
+                prompt_chars=len(prompt), response_chars=len(text) if text else 0,
+                model=model, error=error,
+            )
+
+    async def complete(self, prompt: str, complexity: str | None = None, prefer_free: bool = True, force_provider: str | None = None, force_model: str | None = None, **kwargs) -> str:
+        if force_provider:
+            result = await self.complete_direct(prompt, force_provider, model=force_model, **kwargs)
+            return result["text"]
         level = self.classify(prompt, complexity)
         text, _ = await self._dispatch(prompt, level, prefer_free, **kwargs)
         return text

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 class CompleteRequest(BaseModel):
     prompt: str
     complexity: str | None = None  # "low" | "mid" | "high"; auto-classified by length if omitted
+    prefer_free: bool | None = None  # None -> falls back to the Settings panel's prefer_free
 
 
 class CompleteResponse(BaseModel):
@@ -27,13 +28,96 @@ class ModelsStatusResponse(BaseModel):
     claude_api: bool
 
 
+# --- Dev mode: direct model testing, bypasses routing ---
+
+class DevProviderModels(BaseModel):
+    available: bool
+    models: list[str]
+
+
+class DevModelsResponse(BaseModel):
+    ollama: DevProviderModels
+    nim: DevProviderModels
+    claude_api: DevProviderModels
+    claude_oauth: DevProviderModels
+    openai: DevProviderModels
+
+
+class DevCompleteRequest(BaseModel):
+    prompt: str
+    provider: str  # "ollama" | "nim" | "claude_api" | "claude_oauth"
+    model: str | None = None
+
+
+class DevCompleteResponse(BaseModel):
+    text: str
+    provider: str
+    model: str | None
+
+
+class DevActivityEntry(BaseModel):
+    id: int
+    ts: float
+    level: str
+    logger: str
+    message: str
+
+
+class DevActivityResponse(BaseModel):
+    entries: list[DevActivityEntry]
+
+
+class DevUsageProvider(BaseModel):
+    calls: int
+    cost_usd: float
+    avg_latency_ms: float
+
+
+class DevUsageResponse(BaseModel):
+    total_calls: int
+    total_cost_usd: float
+    by_provider: dict[str, DevUsageProvider]
+
+
+# --- Settings panel ---
+
+class SettingsResponse(BaseModel):
+    prefer_free: bool
+    default_tor: bool
+    default_stealth: bool
+    default_block_unsafe: bool
+
+
+class SettingsUpdateRequest(BaseModel):
+    prefer_free: bool | None = None
+    default_tor: bool | None = None
+    default_stealth: bool | None = None
+    default_block_unsafe: bool | None = None
+
+
+class GPUInfo(BaseModel):
+    name: str
+    memory_used_mb: int
+    memory_total_mb: int
+    utilization_pct: int
+
+
+class DiagnosticsResponse(BaseModel):
+    ollama: DevProviderModels
+    nim: DevProviderModels
+    claude_api: DevProviderModels
+    claude_oauth: DevProviderModels
+    openai: DevProviderModels
+    gpu: GPUInfo | None = None
+
+
 class BrowserFetchRequest(BaseModel):
     url: str
     store: bool = False  # if true, the fetched text is embedded and saved to memory
     collection: str = "browser_history"
-    tor: bool = False
-    stealth: bool = False
-    block_unsafe: bool = False  # if true, run a safety check first and 403 on "dangerous"
+    tor: bool | None = None       # None -> falls back to the Settings panel's default_tor
+    stealth: bool | None = None   # None -> falls back to the Settings panel's default_stealth
+    block_unsafe: bool | None = None  # None -> falls back to default_block_unsafe
 
 
 class BrowserFetchResponse(BaseModel):
@@ -48,8 +132,8 @@ class BrowserFetchResponse(BaseModel):
 class BrowserScreenshotRequest(BaseModel):
     url: str
     full_page: bool = True
-    tor: bool = False
-    stealth: bool = False
+    tor: bool | None = None
+    stealth: bool | None = None
 
 
 class BrowserScreenshotResponse(BaseModel):
@@ -234,6 +318,8 @@ BrowserFetchResponse.model_rebuild()  # resolves the forward-ref to SafetyCheckR
 
 class ToolBuildRequest(BaseModel):
     url: str
+    force_provider: str | None = None
+    force_model: str | None = None
 
 
 class ToolInputSchema(BaseModel):
@@ -275,15 +361,23 @@ class PromptBuildRequest(BaseModel):
     prompt: str
     answers: str | None = None
     round: int = 0
+    force_provider: str | None = None  # dev mode: force this provider for both assess+generate steps
+    force_model: str | None = None
+
+
+class ClarifyQuestion(BaseModel):
+    question: str
+    options: list[str] | None = None
 
 
 class PromptBuildResponse(BaseModel):
-    status: str  # "clarify" | "infeasible" | "ready" | "answered"
-    questions: list[str] = []
+    status: str  # "clarify" | "infeasible" | "ready" | "answered" | "agent_started"
+    questions: list[ClarifyQuestion] = []
     reason: str | None = None
     tool: ToolManifestResponse | None = None
     data: object = None
     output_type: str = "text"
+    agent_run_id: str | None = None  # set when status == "agent_started"
 
 
 class ToolPinRequest(BaseModel):
@@ -325,3 +419,56 @@ class SetPreferenceRequest(BaseModel):
 class MemoryContextResponse(BaseModel):
     memories: list[MemoryRecord] = []
     preferences: dict[str, PreferenceEntry] = {}
+
+
+# --- Phase 10: Agents ---
+
+class AgentRunRequest(BaseModel):
+    goal: str
+    force_provider: str | None = None
+    force_model: str | None = None
+
+
+class AgentStepResponse(BaseModel):
+    id: str
+    idx: int
+    action: str
+    target: str
+    params: dict
+    status: str
+    result: object = None
+    error: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class AgentRunResponse(BaseModel):
+    id: str
+    goal: str
+    status: str
+    error: str | None = None
+    created_at: str
+    updated_at: str
+    steps: list[AgentStepResponse] = []
+
+
+class AgentRunListResponse(BaseModel):
+    runs: list[AgentRunResponse]
+
+
+class AgentScheduleRequest(BaseModel):
+    goal: str
+    recurrence: dict  # {"type": "interval", "minutes": N} | {"type": "daily", "at": "HH:MM"}
+
+
+class AgentScheduleResponse(BaseModel):
+    id: str
+    goal: str
+    recurrence: dict
+    enabled: bool = True
+    next_run_at: str
+    last_run_at: str | None = None
+
+
+class AgentScheduleListResponse(BaseModel):
+    schedules: list[AgentScheduleResponse]

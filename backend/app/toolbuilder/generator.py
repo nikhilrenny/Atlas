@@ -19,6 +19,13 @@ import re
 from app.models.router import router as model_router
 from .manifest import ToolManifest, INPUT_TYPES, OUTPUT_TYPES
 
+# Manifest JSON + a full Python tool implementation routinely exceeds the client
+# libraries' 1024-token default -- that silently truncates mid-function on providers
+# that respect max_tokens (Claude API, Ollama, NIM), producing syntax errors like
+# "expected an indented block" right where the cutoff landed. Code generation gets
+# its own larger budget regardless of provider.
+GENERATION_MAX_TOKENS = 4096
+
 _CODE_RULES = """Output EXACTLY this structure and nothing else -- no commentary before or after, \
 no markdown fences around the whole thing:
 
@@ -59,6 +66,50 @@ Rules for the code:
   breaks via "\n\n", list items as "- item" lines) rather than handing back a raw nested
   dict for the frontend to dump. A person should be able to read "text" output top to bottom
   without mentally parsing braces and quotes.
+- EXCEPTION -- entity/topic lookups: if the request is asking "who/what is X" about a
+  person, place, organization, or general topic, use output_type "json" with this EXACT
+  shape instead of a prose string, so the frontend can render a proper card with images
+  instead of a wall of text:
+  {{"title": "...", "image": "https://... or null", "images": ["https://...", ...],
+   "summary": "1-3 sentence overview", "facts": [{{"label": "Born", "value": "..."}}],
+   "related": ["...", "..."], "source": "https://..."}}
+  For this shape, prefer Wikipedia's REST API over scraping the full article -- two
+  endpoints, both same-domain, no key needed:
+  1. `https://en.wikipedia.org/api/rest_v1/page/summary/<url-encoded-title>` for the text --
+     use its `extract` field as "summary", `description` as a short one-liner (use it as
+     "facts"[0] with label "Description" -- ALWAYS include this fact, it's present on every
+     Wikipedia page), `thumbnail.source` as "image" -- this field is present on the large
+     majority of Wikipedia pages (people, places, works, organizations all have one) so
+     treat a missing thumbnail as the exception, not the default: only leave "image" null
+     if the key is genuinely absent from the response, never skip reading it out of
+     laziness. `content_urls.desktop.page` as "source". Use the `title` field verbatim for
+     your "title" field -- do NOT use `displaytitle`, which contains raw HTML markup
+     (e.g. `<span class="mw-page-title-main">`) that must never appear in the output.
+  2. `https://en.wikipedia.org/api/rest_v1/page/media-list/<url-encoded-title>` for extra
+     photos -- its `items` array has entries with `type: "image"` and a `srcset` or
+     `original.source` field; ALWAYS make this call for entity lookups (not just when
+     convenient) and collect 3-6 of those image URLs into "images" for a gallery. Only
+     leave "images" empty if the call itself errors or the response genuinely has fewer
+     than 2 image items -- not because it felt optional.
+  "facts" must have at least 2 entries whenever the extract contains ANY checkable detail
+  (dates, roles, founding year, notable works, nationality) -- which is nearly always true
+  for a real Wikipedia extract. An empty or single-item "facts" array is a sign you didn't
+  look hard enough at the extract text, not a valid result for a page with real content.
+  "related" can stay an empty list if nothing obvious presents itself -- don't invent
+  related topics that aren't grounded in the fetched data. Only use this shape for genuine
+  entity lookups -- a request for a definition, a how-to, or a narrative summary of an
+  event still uses plain "text".
+  If the query is ambiguous and needs disambiguating before you know the exact page title
+  (e.g. common names, or the query doesn't match a title exactly), resolve it with
+  `https://en.wikipedia.org/w/rest.php/v1/search/page?q=<query>&limit=1` first -- it always
+  returns clean JSON (`{{"pages": [{{"title": ..., "key": ...}}]}}`), unlike the legacy
+  `action=query`/`action=opensearch` endpoints, which return XML/HTML unless you remember
+  `&format=json` and can still misbehave. Do not use the legacy endpoints.
+- Any response you call `.json()` on can fail to parse (rate limiting, a redirect to an
+  HTML page, an unexpected empty body) -- check `resp.status_code == 200` before parsing,
+  and wrap the `.json()` call itself in a try/except that returns a clear string in "data"
+  (e.g. "Couldn't find a Wikipedia page for '<query>'.") instead of letting an unhandled
+  JSONDecodeError crash the whole tool with a traceback the user can't do anything with.
 - Only stdlib, httpx, beautifulsoup4 (`from bs4 import BeautifulSoup`), and Pillow
   (`from PIL import Image`) may be imported. No other third-party libraries are installed --
   using one will fail at runtime. httpx is async; use `httpx.AsyncClient`. Image work happens
@@ -67,6 +118,13 @@ Rules for the code:
 - Network requests are ONLY permitted to these domains: {allowed_domains}. Calls to any
   other host will be blocked at runtime and raise PermissionError -- do not attempt to
   work around this.
+- BeautifulSoup's `.find()`/`.select_one()` return None when nothing matches -- never chain
+  `.text`/`.get_text()` directly onto the result. Check for None first and either try a
+  fallback selector or return a clear error string in "data" (e.g. "Couldn't find that on
+  the page") instead of letting the tool crash with an AttributeError.
+- JPEG has no alpha channel -- saving an RGBA or P-mode (palette) image with
+  `.save(..., format="JPEG")` raises KeyError. Before saving to JPEG, always convert first:
+  `if img.mode in ("RGBA", "P"): img = img.convert("RGB")`.
 - Pattern classification for this tool: {pattern}
 
 {context}
@@ -86,6 +144,33 @@ User's original request: {prompt}"""
 
 _PREAMBLE = "You are generating an automation tool from a web page for Atlas, a personal AI browser. "
 _PREAMBLE_PLAN = "You are generating an automation tool for Atlas, a personal AI browser, from an already-approved plan. "
+
+
+# Libraries the code rules explicitly allow, mapped to (usage-pattern, import-line-to-check-for,
+# import-line-to-prepend). Weaker local models (qwen3.5:9b et al.) reliably reference these
+# without importing them -- same failure class as the missing-`async` bug, so it gets the
+# same fix: auto-repair rather than burn a retry on something trivially fixable.
+_IMPORT_CHECKS = [
+    (r"\bhttpx\.", r"^\s*import httpx\b", "import httpx"),
+    (r"\bBeautifulSoup\(", r"^\s*from bs4 import BeautifulSoup\b", "from bs4 import BeautifulSoup"),
+    (r"\bImage\.(open|new)\(", r"^\s*from PIL import Image\b", "from PIL import Image"),
+    (r"\bbase64\.", r"^\s*import base64\b", "import base64"),
+    (r"\bio\.BytesIO\(", r"^\s*import io\b", "import io"),
+    (r"\bjson\.(loads|dumps)\(", r"^\s*import json\b", "import json"),
+    (r"\bre\.(search|match|sub|findall)\(", r"^\s*import re\b", "import re"),
+]
+
+
+def _ensure_imports(code: str) -> str:
+    """Prepends any missing import for a library the code actually uses. Order doesn't
+    matter -- multiple prepends just stack above the existing code."""
+    missing = [
+        import_line for usage_re, import_re, import_line in _IMPORT_CHECKS
+        if re.search(usage_re, code) and not re.search(import_re, code, re.MULTILINE)
+    ]
+    if missing:
+        code = "\n".join(missing) + "\n" + code
+    return code
 
 
 def _extract_sections(raw: str) -> tuple[dict, str]:
@@ -112,11 +197,11 @@ def _extract_sections(raw: str) -> tuple[dict, str]:
     return manifest_data, code
 
 
-async def _run_generation(full_prompt: str, source_url: str, pattern: str, allowed_domains: list[str]) -> tuple[ToolManifest, str]:
+async def _run_generation(full_prompt: str, source_url: str, pattern: str, allowed_domains: list[str], force_provider: str | None = None, force_model: str | None = None) -> tuple[ToolManifest, str]:
     last_err = None
     for attempt in range(2):  # one retry on malformed output
         try:
-            raw = await model_router.complete(full_prompt, complexity="high")
+            raw = await model_router.complete(full_prompt, complexity="high", force_provider=force_provider, force_model=force_model, max_tokens=GENERATION_MAX_TOKENS)
             manifest_data, code = _extract_sections(raw)
             if not re.search(r"\basync\s+def\s+run\s*\(", code):
                 # Weaker local models sometimes drop the `async` keyword despite the
@@ -126,6 +211,7 @@ async def _run_generation(full_prompt: str, source_url: str, pattern: str, allow
                     code = re.sub(r"\bdef\s+run\s*\(", "async def run(", code, count=1)
                 else:
                     raise ValueError("generated code does not define a run(inputs: dict) function")
+            code = _ensure_imports(code)
             try:
                 compile(code, "<generated>", "exec")
             except SyntaxError as e:
@@ -146,16 +232,16 @@ async def _run_generation(full_prompt: str, source_url: str, pattern: str, allow
     raise RuntimeError(f"tool generation failed after retry: {last_err}")
 
 
-async def generate(url: str, title: str, text: str, pattern: str, allowed_domains: list[str]) -> tuple[ToolManifest, str]:
+async def generate(url: str, title: str, text: str, pattern: str, allowed_domains: list[str], force_provider: str | None = None, force_model: str | None = None) -> tuple[ToolManifest, str]:
     context = _URL_CONTEXT.format(url=url, title=title, text=text[:6000])
     rules = _CODE_RULES.format(
         allowed_domains=", ".join(allowed_domains) or "(none -- generated tool will have no network access)",
         pattern=pattern, context=context,
     )
-    return await _run_generation(_PREAMBLE + rules, url, pattern, allowed_domains)
+    return await _run_generation(_PREAMBLE + rules, url, pattern, allowed_domains, force_provider, force_model)
 
 
-async def generate_from_plan(prompt: str, plan: dict) -> tuple[ToolManifest, str]:
+async def generate_from_plan(prompt: str, plan: dict, force_provider: str | None = None, force_model: str | None = None) -> tuple[ToolManifest, str]:
     allowed_domains = plan.get("target_domains", [])
     pattern = plan.get("pattern", "generic")
     context = _PLAN_CONTEXT.format(plan=json.dumps(plan), prompt=prompt)
@@ -163,4 +249,4 @@ async def generate_from_plan(prompt: str, plan: dict) -> tuple[ToolManifest, str
         allowed_domains=", ".join(allowed_domains) or "(none -- generated tool will have no network access)",
         pattern=pattern, context=context,
     )
-    return await _run_generation(_PREAMBLE_PLAN + rules, "", pattern, allowed_domains)
+    return await _run_generation(_PREAMBLE_PLAN + rules, "", pattern, allowed_domains, force_provider, force_model)

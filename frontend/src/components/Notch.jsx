@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
+import ToolPanel from "./ToolPanel";
 
 const API = "http://127.0.0.1:8765/api";
 
 const DOT_COLORS = { lookup: "#6366F1", tool_execution: "#10B981", page_visit: "#F59E0B" };
 
-export default function Notch({ onNavigate }) {
-  const [open, setOpen]   = useState(false);
+export default function Notch({ onNavigate, open, onToggle, onClose }) {
   const [tools, setTools] = useState([]);
   const [activity, setActivity] = useState([]);
-  const [runningId, setRunningId] = useState(null);
-  const [runResult, setRunResult] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
     if (!open) return;
@@ -21,34 +20,14 @@ export default function Notch({ onNavigate }) {
       .then(d => setActivity(d.memories || []));
   }, [open]);
 
-  const quickRun = async (tool) => {
-    setRunningId(tool.id);
-    setRunResult(null);
-    try {
-      const inputs = Object.fromEntries(
-        tool.inputs.filter(f => f.default != null).map(f => [f.name, f.default])
-      );
-      const res = await fetch(`${API}/toolbuilder/tools/${tool.id}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputs }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail);
-      setRunResult({ id: tool.id, data: data.data, output_type: data.output_type });
-    } catch (e) {
-      setRunResult({ id: tool.id, error: e.message });
-    } finally {
-      setRunningId(null);
-    }
-  };
+  const expandedTool = tools.find(t => t.id === expandedId);
 
   return (
     <>
       {open && (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 98 }}
-          onClick={() => setOpen(false)}
+          onClick={onClose}
         />
       )}
 
@@ -61,18 +40,13 @@ export default function Notch({ onNavigate }) {
               <p className="notch-section-title">Pinned tools</p>
               <div className="notch-tools-grid">
                 {tools.map(t => (
-                  <div key={t.id} className="notch-tool-card" onClick={() => quickRun(t)}>
+                  <div
+                    key={t.id}
+                    className={`notch-tool-card ${expandedId === t.id ? "notch-tool-card-active" : ""}`}
+                    onClick={() => setExpandedId(id => (id === t.id ? null : t.id))}
+                  >
                     <p className="notch-tool-name">{t.name}</p>
                     <p className="notch-tool-pattern">{t.pattern}</p>
-                    {runningId === t.id && <p style={{ fontSize: "0.72rem", color: "var(--text-3)", marginTop: "0.3rem" }}>Running…</p>}
-                    {runResult?.id === t.id && runResult.error && (
-                      <p style={{ fontSize: "0.72rem", color: "var(--danger)", marginTop: "0.3rem" }}>{runResult.error}</p>
-                    )}
-                    {runResult?.id === t.id && runResult.data != null && (
-                      <p style={{ fontSize: "0.72rem", color: "var(--success)", marginTop: "0.3rem" }}>
-                        {String(runResult.data).slice(0, 80)}
-                      </p>
-                    )}
                   </div>
                 ))}
               </div>
@@ -99,12 +73,21 @@ export default function Notch({ onNavigate }) {
       )}
 
       <div className="notch-anchor">
-        <div className={`notch-pill ${open ? "open" : ""}`} onClick={() => setOpen(o => !o)}>
+        <div className={`notch-pill ${open ? "open" : ""}`} onClick={onToggle}>
           <div className="notch-pill-dot" />
           <div className="notch-pill-dot" />
           <div className="notch-pill-dot" />
         </div>
       </div>
+
+      {expandedTool && (
+        <div className="notch-tool-modal-backdrop" onClick={() => setExpandedId(null)}>
+          <div className="notch-tool-modal-card" onClick={e => e.stopPropagation()}>
+            <button className="notch-tool-modal-close" onClick={() => setExpandedId(null)} aria-label="Close">&times;</button>
+            <ToolPanel manifest={expandedTool} />
+          </div>
+        </div>
+      )}
     </>
   );
 }

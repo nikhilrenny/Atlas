@@ -35,6 +35,9 @@ logging.basicConfig(
 # Force our app logger to INFO so it propagates to uvicorn's root handler regardless.
 logging.getLogger("app").setLevel(logging.INFO)
 
+from app.dev import activity_log
+activity_log.install()  # dev-only "Scripts Mode" panel taps the root logger
+
 from dotenv import load_dotenv
 
 load_dotenv()  # safety net; app.models also loads .env on import, see app/models/__init__.py
@@ -44,11 +47,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as api_router
 from app.browser.engine import engine as browser_engine
+from app import agents as atlas_agents
+from app.agents import scheduler as agent_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    agent_scheduler.start()
     yield
+    agent_scheduler.stop()
     await browser_engine.stop()  # closes the shared Playwright/Chromium process cleanly
 
 

@@ -187,6 +187,25 @@ def count_memories(type_: str) -> int:
     return row["n"] if row else 0
 
 
+def clear_all(type_: str | None = None) -> int:
+    """Deletes all memory rows (optionally scoped to one type). Used by the Settings
+    panel's 'clear memory' action. Also wipes the matching ChromaDB collection when
+    clearing everything, since per-id deletion there isn't worth the round-trips."""
+    with _get_conn() as conn:
+        if type_:
+            cur = conn.execute("DELETE FROM memories WHERE type=?", (type_,))
+        else:
+            cur = conn.execute("DELETE FROM memories")
+    if not type_:
+        try:
+            import chromadb
+            client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+            client.delete_collection("atlas_memories")
+        except Exception:
+            pass
+    return cur.rowcount
+
+
 # --- Helpers ---
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

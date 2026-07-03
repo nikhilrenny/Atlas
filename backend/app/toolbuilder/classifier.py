@@ -21,10 +21,10 @@ Page text (truncated):
 """
 
 
-async def classify(url: str, title: str, text: str) -> str:
+async def classify(url: str, title: str, text: str, force_provider: str | None = None, force_model: str | None = None) -> str:
     prompt = _PROMPT.format(patterns=", ".join(PATTERNS), url=url, title=title, text=text[:3000])
     try:
-        result = await model_router.complete(prompt, complexity="low")
+        result = await model_router.complete(prompt, complexity="low", force_provider=force_provider, force_model=force_model)
     except Exception:
         return "generic"
     label = result.strip().lower().split()[0].strip(".,:;\"'") if result.strip() else ""

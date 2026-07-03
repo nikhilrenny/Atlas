@@ -13,12 +13,29 @@ function normalizeUrl(value) {
   return /^https?:\/\//i.test(v) ? v : `https://${v}`;
 }
 
-export default function ToolBuilderPage({ initialPrompt = "" }) {
+export default function ToolBuilderPage({ initialPrompt = "", devMode = false }) {
   const [input, setInput] = useState(initialPrompt);
   const [tools, setTools] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState(null);
+
+  // Dev mode: force a specific provider/model through classify+generate, same as HomePage.
+  const [devModels, setDevModels] = useState(null);
+  const [devPick, setDevPick] = useState("");
+  const [devListOpen, setDevListOpen] = useState(false);
+
+  useEffect(() => {
+    if (!devMode || devModels) return;
+    fetch(`${API}/dev/models`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(d => {
+        setDevModels(d);
+        const first = Object.entries(d).find(([, v]) => v.available && v.models.length);
+        if (first) setDevPick(`${first[0]}::${first[1].models[0]}`);
+      })
+      .catch(e => setDevModels({ _error: e.message }));
+  }, [devMode, devModels]);
 
   // Prompt-path clarification state
   const [clarify, setClarify] = useState(null); // {prompt, questions, round}
@@ -45,10 +62,11 @@ export default function ToolBuilderPage({ initialPrompt = "" }) {
   };
 
   const buildFromUrl = async (url) => {
+    const [force_provider, force_model] = devMode && devPick ? devPick.split("::") : [undefined, undefined];
     const res = await fetch(`${API}/toolbuilder/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, force_provider, force_model }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || "generation failed");
@@ -56,10 +74,11 @@ export default function ToolBuilderPage({ initialPrompt = "" }) {
   };
 
   const buildFromPrompt = async (prompt, answerText, round) => {
+    const [force_provider, force_model] = devMode && devPick ? devPick.split("::") : [undefined, undefined];
     const res = await fetch(`${API}/toolbuilder/build_from_prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, answers: answerText || null, round }),
+      body: JSON.stringify({ prompt, answers: answerText || null, round, force_provider, force_model }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || "build failed");
@@ -106,7 +125,7 @@ export default function ToolBuilderPage({ initialPrompt = "" }) {
     setBuilding(true);
     setError(null);
     try {
-      const answerText = clarify.questions.map((q, i) => `${q} ${answers[i] || "(no answer)"}`).join("; ");
+      const answerText = clarify.questions.map((q, i) => `${q.question} ${answers[i] || "(no answer)"}`).join("; ");
       await buildFromPrompt(clarify.prompt, answerText, clarify.round);
     } catch (e) {
       setError(e.message);
@@ -135,8 +154,40 @@ export default function ToolBuilderPage({ initialPrompt = "" }) {
 
   return (
     <div className="toolbuilder-page">
-      <h2>Tool Builder</h2>
-      <p>Paste a URL to turn a page into a tool, or describe what you want built.</p>
+      <div className="tb-header-card glass-card">
+        <h2 className="tb-title">Tool Builder</h2>
+        <p className="tb-subtitle">Paste a URL to turn a page into a tool, or describe what you want built.</p>
+
+      {devMode && (
+        <div className="dev-model-row" style={{ marginBottom: "0.9rem" }}>
+          <span className="dev-model-badge">DEV</span>
+          <div className="dev-model-pill" onClick={() => setDevListOpen(o => !o)}>
+            <span>{devModels?._error ? `error: ${devModels._error}` : devPick ? devPick.replace("::", " · ") : devModels ? "no models available" : "loading models…"}</span>
+            <svg viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
+          {devListOpen && devModels && !devModels._error && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setDevListOpen(false)} />
+              <div className="dev-model-list">
+                {Object.entries(devModels).filter(([, info]) => info.available).map(([provider, info]) => (
+                  <div key={provider}>
+                    <p className="dev-model-group-label">{provider}</p>
+                    {info.models.map(m => {
+                      const value = `${provider}::${m}`;
+                      return (
+                        <div key={value} className={`dev-model-option ${devPick === value ? "active" : ""}`}
+                          onClick={() => { setDevPick(value); setDevListOpen(false); }}>
+                          {m}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {!clarify && (
         <div className="tb-build-row">
@@ -146,7 +197,7 @@ export default function ToolBuilderPage({ initialPrompt = "" }) {
             placeholder="https://... or 'build me a weather widget'"
             onKeyDown={(e) => e.key === "Enter" && build()}
           />
-          <button onClick={build} disabled={building}>{building ? "Working..." : "Build tool"}</button>
+          <button className="btn-primary" onClick={build} disabled={building}>{building ? "Working..." : "Build tool"}</button>
         </div>
       )}
 
@@ -154,19 +205,35 @@ export default function ToolBuilderPage({ initialPrompt = "" }) {
         <div className="tb-clarify">
           <p>A couple of things to pin down before building:</p>
           {clarify.questions.map((q, i) => (
-            <label key={i} className="tb-field">
-              <span>{q}</span>
-              <input
-                value={answers[i] || ""}
-                onChange={(e) => setAnswers((a) => ({ ...a, [i]: e.target.value }))}
-              />
-            </label>
+            <div key={i} className="tb-field">
+              <span>{q.question}</span>
+              {q.options?.length ? (
+                <div className="clarify-options">
+                  {q.options.map(opt => (
+                    <button
+                      key={opt}
+                      type="button"
+                      className={`clarify-option ${answers[i] === opt ? "active" : ""}`}
+                      onClick={() => setAnswers((a) => ({ ...a, [i]: opt }))}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <input
+                  value={answers[i] || ""}
+                  onChange={(e) => setAnswers((a) => ({ ...a, [i]: e.target.value }))}
+                />
+              )}
+            </div>
           ))}
-          <button onClick={submitAnswers} disabled={building}>{building ? "Working..." : "Continue"}</button>
+          <button className="btn-primary" onClick={submitAnswers} disabled={building}>{building ? "Working..." : "Continue"}</button>
         </div>
       )}
 
       {error && <p className="tb-error">{error}</p>}
+      </div>
 
       {lookupResult && (
         <div className="tb-lookup-result">

@@ -12,6 +12,7 @@ from .store import (
     list_memories,
     get_memory,
     delete_memory,
+    clear_all,
     get_preferences,
     get_preference,
 )
